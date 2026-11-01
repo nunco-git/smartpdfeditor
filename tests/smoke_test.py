@@ -82,7 +82,7 @@ def shot(name):
         root.lift()
         x, y = root.winfo_rootx(), root.winfo_rooty()
         os.makedirs(SHOTS, exist_ok=True)
-        ImageGrab.grab(bbox=(x, y, x + root.winfo_width(), y + root.winfo_height())).save(
+        ImageGrab.grab(bbox=(x, y, x + root.winfo_width(), y + root.winfo_height()), all_screens=True).save(
             os.path.join(SHOTS, name + ".png"))
     except Exception as ex:
         print("   (스크린샷 생략:", ex, ")")
@@ -363,6 +363,8 @@ for w in root.winfo_children():
         w.destroy()
 
 step("색상표")
+app.pick_tool("mark")
+pump(0.2)
 pop = app.palette_popup(app.swatch, app.set_color)
 pump(0.2)
 cells = [w for fr in pop.winfo_children() for w in fr.winfo_children() if w.cget("text") == ""]
