@@ -170,9 +170,10 @@ HELP_TEXT = [
      "· 탐색기에서 PDF를 더블클릭하면 이미 켜진 창의 새 탭으로 열립니다. (설정에서 '새 창'으로 변경 가능)\n"
      "· Ctrl+Tab 탭 이동 · Ctrl+W 탭 닫기 · 탭 우클릭 → 새 창으로 옮기기\n", ""),
     ("■ 보기", "h2"),
-    ("· 마우스 휠로 위아래 연속 스크롤, Ctrl+휠 확대/축소\n"
-     "· [보기] 칸: 한 쪽씩 / 연속 스크롤 / 2·3·4쪽 나란히\n"
-     "· ↔ 가로맞춤(Ctrl+1) · ↕ 세로맞춤(Ctrl+2) · 100%(Ctrl+0)\n", ""),
+    ("· 마우스 휠로 위아래 연속 스크롤 (보기 메뉴: 휠 한 칸에 한 쪽씩), Ctrl+휠 확대/축소\n"
+     "· 아래 상태줄 오른쪽 아이콘: ↔ 가로맞춤 · ↕ 세로맞춤 · 한 쪽씩 / 연속 / 2·3·4쪽 나란히\n"
+     "· 👁 뷰어 모드: 끌어서 글자 선택 → Ctrl+C 복사, Ctrl+B 선택한 글자로 북마크, 우클릭 메뉴\n"
+     "· 휠 버튼(가운데 버튼)으로 끌면 화면 이동\n", ""),
     ("■ 도구 (Esc = 글자수정으로 돌아가기)", "h2"),
     ("· ✎ 글자수정: 글자를 클릭 → 새 글자 입력 → Enter.  Ctrl+F 찾아 바꾸기\n"
      "· 🖍 색칠: 글자를 클릭하거나 영역을 끌어서 형광펜\n"
@@ -185,7 +186,7 @@ HELP_TEXT = [
     ("· ⟲ ⟳ 지금 쪽 회전 (Ctrl+L / Ctrl+R) · [여러 쪽 회전]\n"
      "· [원하는 쪽만 저장] (Ctrl+E): 예) 7, 2, 10-12 → 그 쪽들만 새 PDF로\n", ""),
     ("■ 왼쪽 사이드바 (F9로 숨기기)", "h2"),
-    ("· 즐겨찾기(Ctrl+D) · 북마크(Ctrl+B, 지금 쪽 저장) — 새 폴더를 만들고 끌어서 정리\n"
+    ("· 즐겨찾기(Ctrl+D) · 북마크(Ctrl+B) — 글자를 선택하고 추가하면 그 글자가 이름이 되고 그 위치로 이동\n"
      "· 파일 검색(Ctrl+Shift+F): 폴더 안 PDF를 파일명·본문으로 찾기 → 결과를 즐겨찾기/북마크로 저장\n", ""),
     ("■ 저장", "h2"),
     ("· Ctrl+S — 기본 이름은 '원본_수정.pdf' (원본은 그대로)\n"
@@ -662,6 +663,32 @@ def load_ad_cache():
         return None
 
 
+# ───────────────────────── 보기 방식 아이콘 (그림 파일 없이 직접 그림) ─────────────────────────
+def make_view_icon(kind, fg="#444444", bg="#ffffff"):
+    W, H = 26, 18
+    img = tk.PhotoImage(width=W, height=H)
+
+    def page(x0, y0, x1, y1):
+        img.put(fg, to=(x0, y0, x1, y1))
+        if x1 - x0 > 2 and y1 - y0 > 2:
+            img.put(bg, to=(x0 + 1, y0 + 1, x1 - 1, y1 - 1))
+            for yy in range(y0 + 3, y1 - 2, 3):   # 글줄 모양
+                img.put("#9aa0a6", to=(x0 + 2, yy, x1 - 2, yy + 1))
+    if kind == "single":
+        page(8, 1, 19, 17)
+    elif kind == "cont":
+        page(8, 0, 19, 8)
+        page(8, 10, 19, 18)
+    else:
+        n = {"cont2": 2, "cont3": 3, "cont4": 4}[kind]
+        w = (W - 2 - (n - 1) * 2) // n
+        x = (W - (n * w + (n - 1) * 2)) // 2
+        for _ in range(n):
+            page(x, 3, x + w, 16)
+            x += w + 2
+    return img
+
+
 # ───────────────────────── 말풍선 도움말 ─────────────────────────
 class Tooltip:
     def __init__(self, widget, text):
@@ -695,6 +722,7 @@ class DocTab:
         self.undo = []
         self._dirty = False
         self.items_cache = {}
+        self.words_cache = {}
         self.annot_cache = {}
         self.mats = {}
         self.sizes = []
@@ -1179,6 +1207,8 @@ class App:
         self.wheel_page = tk.BooleanVar(value=pr.get("wheel_page", False))  # 휠 한 칸 = 한 쪽
         self.panning = False
         self._wheel_t = 0
+        self.sel = None          # 선택한 글자 {"page", "text", "rects", "y"}
+        self.selecting = None
 
         self._build_ui()
         for f in files:
@@ -1351,25 +1381,25 @@ class App:
         self.zoom_lbl = ttk.Label(bar, text=f"{round(self.zoom * 100)}%", width=5, anchor="center")
         self.zoom_lbl.pack(side="left")
         btn("＋", lambda: self.set_zoom(self.zoom * 1.2), "확대 (Ctrl++)", 3)
-        for val, txt, tip in (("width", "↔", "가로맞춤 (Ctrl+1)"), ("height", "↕", "세로맞춤 (Ctrl+2)")):
-            rb = ttk.Radiobutton(bar, text=txt, value=val, variable=self.fit, style="Toolbutton", width=3,
-                                 command=self.on_fit)
-            rb.pack(side="left", padx=1)
-            Tooltip(rb, tip)
-        vc = ttk.Combobox(bar, textvariable=self.view_var, values=[t for _, t, _ in VIEWS], width=11, state="readonly")
-        vc.pack(side="left", padx=(4, 0))
-        vc.bind("<<ComboboxSelected>>", lambda e: (self.on_view(), self.cv.focus_set()))
-        Tooltip(vc, "한 화면에 보이는 쪽 수")
+        sep()
+        btn("⟲", lambda: self.rotate_pages([self.page_no], -90), "이 쪽 왼쪽으로 회전 (Ctrl+L)", 3)
+        btn("⟳", lambda: self.rotate_pages([self.page_no], 90), "이 쪽 오른쪽으로 회전 (Ctrl+R)", 3)
+        btn("회전…", self.rotate_dialog, "여러 쪽 한꺼번에 회전", 5)
 
-        # 편집 모드에서만 보이는 도구 고르기 + 도구별 옵션
+        # 편집 모드에서만 보이는 도구 버튼 + 도구별 옵션
         self.toolarea = ttk.Frame(bar)
-        self.toolarea.pack(side="left", padx=(5, 0))
-        self.tool_mb = ttk.Menubutton(self.toolarea, width=11)
-        tmenu = tk.Menu(self.tool_mb, tearoff=0)
-        for k, t in TOOLS:
-            tmenu.add_radiobutton(label=t, value=k, variable=self.mode, command=self.on_mode)
-        self.tool_mb["menu"] = tmenu
-        Tooltip(self.tool_mb, "편집 도구 (메뉴 [도구]에 세부 설정)")
+        self.toolarea.pack(side="left", padx=(6, 0))
+        self.toolbtns = ttk.Frame(self.toolarea)
+        short = {"edit": "✎수정", "mark": "🖍색칠", "hide": "■감추기", "shape": "◻도형", "memo": "💬메모",
+                 "erase": "⌫지우개", "capture": "✂캡쳐"}
+        tips = {"edit": "글자 수정 — 글자를 클릭 (Esc)", "mark": "색칠 — 글자 클릭 또는 영역 끌기",
+                "hide": "감추기 — 아래 내용을 지우고 덮기", "shape": "도형 — 사각형·원·선·화살표 (Shift: 정사각형·정원)",
+                "memo": "메모 붙이기", "erase": "색칠·도형·메모 지우기", "capture": "영역 캡쳐 → 클립보드 (Ctrl+Shift+C)"}
+        for k, _ in TOOLS:
+            rb = ttk.Radiobutton(self.toolbtns, text=short[k], value=k, variable=self.mode, style="Toolbutton",
+                                 command=self.on_mode)
+            rb.pack(side="left", padx=0)
+            Tooltip(rb, tips[k])
         self.optbox = ttk.Frame(self.toolarea)
         self.opt = {k: ttk.Frame(self.optbox) for k, _ in TOOLS}
 
@@ -1389,13 +1419,32 @@ class App:
         self.shape_swatch.pack(side="left", padx=2)
         self.shape_swatch.bind("<Button-1>", lambda e: self.pick_shape_color())
         Tooltip(self.shape_swatch, "선 색 고르기")
-        for c in ("#e53935", "#1e88e5", "#43a047", "#000000"):
+        for c in ("#e53935", "#1e88e5", "#000000"):
             b_ = tk.Label(f, width=1, bg=c, relief="ridge", cursor="hand2")
             b_.pack(side="left", padx=1)
             b_.bind("<Button-1>", lambda e, c=c: self.set_shape_color(c))
         sp = ttk.Spinbox(f, from_=0.5, to=20, increment=0.5, textvariable=self.shape_width, width=3)
         sp.pack(side="left", padx=2)
         Tooltip(sp, "선 두께(pt) · 채우기는 [도구 → 도형]")
+
+        # 아래 상태줄: 왼쪽 안내 글 / 오른쪽 맞춤·보기 방식 아이콘
+        self.status = tk.StringVar(value="PDF를 열어주세요 (Ctrl+O).")
+        sbar = ttk.Frame(self.root, padding=(4, 1))
+        sbar.pack(side="bottom", fill="x")
+        self.view_icons = {}
+        for k, t, _ in reversed(VIEWS):
+            self.view_icons[k] = make_view_icon(k)
+            rb = ttk.Radiobutton(sbar, image=self.view_icons[k], value=t, variable=self.view_var,
+                                 style="Toolbutton", command=self.on_view)
+            rb.pack(side="right", padx=1)
+            Tooltip(rb, t)
+        ttk.Separator(sbar, orient="vertical").pack(side="right", fill="y", padx=6)
+        for val, txt, tip in (("height", "↕", "세로맞춤 — 한 쪽 전체 (Ctrl+2)"), ("width", "↔", "가로맞춤 — 폭에 맞춤 (Ctrl+1)")):
+            rb = ttk.Radiobutton(sbar, text=txt, value=val, variable=self.fit, style="Toolbutton", width=3,
+                                 command=self.on_fit)
+            rb.pack(side="right", padx=1)
+            Tooltip(rb, tip)
+        ttk.Label(sbar, textvariable=self.status, anchor="w").pack(side="left", fill="x", expand=True)
 
         # 우측: 로고(→ smartgong.kr) · 사용방법 · 뷰어/편집 모드
         try:
@@ -1476,10 +1525,13 @@ class App:
         hs.pack(side="bottom", fill="x")
         self.cv.pack(fill="both", expand=True)
 
-        self.status = tk.StringVar(value="PDF를 열어주세요 (Ctrl+O). 글자를 클릭하면 수정할 수 있습니다.")
-        ttk.Label(self.root, textvariable=self.status, anchor="w", padding=(6, 3)).pack(fill="x")
 
         self.cv.bind("<Motion>", self.on_move)
+        self.cv.bind("<ButtonPress-2>", self.pan_start)
+        self.cv.bind("<B2-Motion>", self.pan_move)
+        self.cv.bind("<ButtonRelease-2>", self.pan_end)
+        self.cv.bind("<Button-3>", self.on_context)
+        self.root.bind("<Control-c>", self.copy_selection)
         self.cv.bind("<ButtonPress-1>", self.on_press)
         self.cv.bind("<B1-Motion>", self.on_drag)
         self.cv.bind("<ButtonRelease-1>", self.on_release)
@@ -1726,6 +1778,7 @@ class App:
 
     # ---------- 탭 ----------
     def switch_tab(self, t):
+        self.sel = None
         if t is not self.tab:
             self.remember_page()
             self.cv.delete("all")
@@ -2098,14 +2151,25 @@ class App:
             return None
         if not self.ensure_room("bookmarks"):
             return None
-        default = f"{os.path.splitext(os.path.basename(self.path))[0]} - {self.page_no + 1}쪽"
-        name = ask_text(self.root, "북마크 추가", "북마크 이름", default)
+        page, pos = self.page_no, None
+        if self.sel and self.sel["text"].strip():   # 선택한 글자가 있으면 그 글자를 이름으로, 그 위치로
+            default = " ".join(self.sel["text"].split())[:60]
+            page, pos = self.sel["page"], round(self.sel["y"], 4)
+        else:
+            default = f"{os.path.splitext(os.path.basename(self.path))[0]} - {self.page_no + 1}쪽"
+        name = ask_text(self.root, "북마크 추가", f"북마크 이름  ({page + 1}쪽)", default)
         if not name:
             return None
-        return {"type": "mark", "name": name, "path": self.path, "page": self.page_no, "added": time.time()}
+        node = {"type": "mark", "name": name, "path": self.path, "page": page, "added": time.time()}
+        if pos:
+            node["pos"] = pos
+        return node
 
     def open_bookmark(self, node):
-        self.open_path(node["path"], int(node.get("page", 0)))
+        pg = int(node.get("page", 0))
+        if self.open_path(node["path"], pg) and node.get("pos"):
+            self.root.update_idletasks()
+            self.goto(pg, float(node["pos"]))
 
     def add_favorite_now(self):
         self.side.select(self.fav_panel)
@@ -2257,6 +2321,7 @@ class App:
         self.cv.delete("all")
         self.imgs.clear()
         self.items_cache.clear()
+        self.words_cache.clear()
         self.annot_cache.clear()
         self.mats.clear()
         if not self.doc:
@@ -2285,15 +2350,20 @@ class App:
             self.cv.xview_moveto(xfrac)
         self.update_page_label()
         self.update_visible()
+        self.draw_selection()
         self._sync_page = True
 
-    def scroll_to(self, p):
+    def scroll_to(self, p, frac=None):
+        """p쪽으로 이동. frac: 쪽 안의 세로 위치(0~1, 회전 반영 전 좌표 기준)"""
         if p not in self.slots:
             return
         x, y, w, h = self.slots[p]
         sr = self.cv.cget("scrollregion").split()
         th = float(sr[3]) if len(sr) == 4 else 1
-        self.cv.yview_moveto(max(0, (y - MARGIN) / th))
+        top = y - MARGIN
+        if frac:
+            top = y + h * frac - self.cv.winfo_height() * 0.25
+        self.cv.yview_moveto(max(0, top / th))
 
     def schedule_visible(self):
         if self._vis_job is None:
@@ -2324,8 +2394,9 @@ class App:
                 continue
             self.imgs[p] = img
             self.cv.create_image(x, y, image=img, anchor="nw", tags=("page", f"img{p}"))
-        if self.cv.find_withtag("hl"):
-            self.cv.tag_raise("hl")
+        for tag in ("tsel", "hl"):
+            if self.cv.find_withtag(tag):
+                self.cv.tag_raise(tag)
         # 현재 쪽 = 화면 위쪽 1/3 지점에 걸친 쪽
         if self._sync_page and self.view != "single":
             mid = top + ch / 3
@@ -2483,11 +2554,13 @@ class App:
         self.conf["prefs"]["app_mode"] = m
         self.cv.delete("hl")
         if m == "view":
-            self.tool_mb.pack_forget()
+            self.toolbtns.pack_forget()
             self.optbox.pack_forget()
-            self.status.set("뷰어 모드: 휠·끌기로 이동합니다. 고치려면 [✎ 편집]을 누르세요 (F4).")
+            self.status.set("뷰어 모드: 끌어서 글자 선택 (Ctrl+C 복사 · Ctrl+B 북마크) · 휠 버튼으로 끌면 화면 이동 · "
+                            "고치려면 [✎ 편집] (F4)")
         else:
-            self.tool_mb.pack(side="left")
+            self.clear_selection()
+            self.toolbtns.pack(side="left")
             self.optbox.pack(side="left")
             self.on_mode()
 
@@ -2507,7 +2580,6 @@ class App:
         if not quiet:
             self.status.set(tips[m])
         self.cv.delete("hl")
-        self.tool_mb.config(text=TOOL_LABEL[m])
         for k, f in self.opt.items():
             if k == m:
                 f.pack(side="left")
@@ -2526,8 +2598,11 @@ class App:
         an = self.annot_at(p, pt)
         if an and an[1] == fitz.PDF_ANNOT_TEXT and an[2]:
             self.status.set("💬 " + an[2].replace("\n", " ")[:120])
-        if self.app_mode.get() == "view":   # 뷰어 모드: 편집칸 표시 없음
-            self.cv.configure(cursor="fleur" if self.panning else "hand2")
+        if self.app_mode.get() == "view":   # 뷰어 모드: 편집칸 표시 없음, 글자 위에서는 글자 선택 커서
+            if self.panning:
+                self.cv.configure(cursor="fleur")
+            else:
+                self.cv.configure(cursor="xterm" if self.hit_pt(p, pt) else "arrow")
             return
         if mode == "erase":
             if an:
@@ -2547,11 +2622,14 @@ class App:
 
     def on_press(self, e):
         self.cv.focus_set()
-        if self.app_mode.get() == "view":   # 뷰어 모드: 끌어서 화면 이동
-            self.panning = True
-            self.cv.scan_mark(e.x, e.y)
-            self.cv.configure(cursor="fleur")
+        if self.app_mode.get() == "view":   # 뷰어 모드: 쪽 위에서 끌면 글자 선택, 바깥에서 끌면 화면 이동
             self.press = None
+            cx, cy = self.cv.canvasx(e.x), self.cv.canvasy(e.y)
+            p = self.page_at(cx, cy) if self.doc else None
+            if p is None:
+                self.pan_start(e)
+            else:
+                self.selecting = (p, self.canvas_to_page(p, cx, cy), False)
             return
         cx, cy = self.cv.canvasx(e.x), self.cv.canvasy(e.y)
         p = self.page_at(cx, cy)
@@ -2577,7 +2655,13 @@ class App:
 
     def on_drag(self, e):
         if self.panning:
-            self.cv.scan_dragto(e.x, e.y, gain=1)
+            self.pan_move(e)
+            return
+        if self.selecting:
+            p, a, _ = self.selecting
+            cx, cy = self.clamp_to_page(p, self.cv.canvasx(e.x), self.cv.canvasy(e.y))
+            self.selecting = (p, a, True)
+            self.select_text(p, a, self.canvas_to_page(p, cx, cy))
             return
         mode = self.mode.get()
         if not self.press or mode not in ("mark", "hide", "shape", "capture"):
@@ -2615,8 +2699,18 @@ class App:
 
     def on_release(self, e):
         if self.panning:
-            self.panning = False
-            self.cv.configure(cursor="hand2")
+            self.pan_end(e)
+            return
+        if self.selecting:
+            p, a, moved = self.selecting
+            self.selecting = None
+            self.page_no = p
+            self.update_page_label()
+            if not moved:
+                self.clear_selection()
+            elif self.sel:
+                t = self.sel["text"].replace("\n", " ")
+                self.status.set(f"선택: \"{t[:40]}{'…' if len(t) > 40 else ''}\"  ·  Ctrl+C 복사 · Ctrl+B 북마크 · 우클릭 메뉴")
             return
         if not self.press or not self.doc:
             self.press = None
@@ -2665,6 +2759,128 @@ class App:
             self.memo_at(pt)
         elif mode == "erase":
             self.erase_at(pt)
+
+    # ---------- 글자 선택 (뷰어 모드) ----------
+    def words_for(self, p):
+        if p not in self.words_cache:
+            page = self.doc[p]
+            with unrotated(page):
+                self.words_cache[p] = [w for w in page.get_text("words") if w[4].strip()]
+        return self.words_cache[p]
+
+    @staticmethod
+    def _nearest_word(words, pt):
+        best, bd = None, None
+        for i, w in enumerate(words):
+            r = fitz.Rect(w[:4])
+            if pt in r:
+                return i
+            dx = max(r.x0 - pt.x, 0, pt.x - r.x1)
+            dy = max(r.y0 - pt.y, 0, pt.y - r.y1)
+            d = dx + dy * 3          # 같은 줄을 우선
+            if bd is None or d < bd:
+                best, bd = i, d
+        return best
+
+    def select_text(self, p, a, b):
+        """a~b 사이 글자를 읽는 순서대로 선택"""
+        words = self.words_for(p)
+        if not words:
+            self.clear_selection()
+            return
+        i, j = self._nearest_word(words, a), self._nearest_word(words, b)
+        lo, hi = min(i, j), max(i, j)
+        chosen = words[lo:hi + 1]
+        parts, prev = [], None
+        for w in chosen:
+            key = (w[5], w[6])
+            if prev is not None:
+                parts.append(" " if key == prev else "\n")
+            parts.append(w[4])
+            prev = key
+        page_h = self.doc[p].mediabox.height or 1
+        self.sel = {"page": p, "text": "".join(parts), "rects": [fitz.Rect(w[:4]) for w in chosen],
+                    "y": max(0.0, min(1.0, chosen[0][1] / page_h))}
+        self.draw_selection()
+
+    def draw_selection(self):
+        self.cv.delete("tsel")
+        if not self.sel or not self.doc or self.sel["page"] not in self.slots:
+            return
+        p = self.sel["page"]
+        for r in self.sel["rects"]:
+            x0, y0, x1, y1 = self.page_to_canvas_rect(p, r)
+            self.cv.create_rectangle(x0, y0, x1, y1, fill="#2f7cf6", outline="", stipple="gray50", tags="tsel")
+
+    def clear_selection(self):
+        self.sel = None
+        self.cv.delete("tsel")
+
+    def copy_selection(self, e=None):
+        try:
+            cls = self.root.focus_get().winfo_class()
+        except (AttributeError, KeyError, tk.TclError):
+            cls = ""
+        if cls in ("TEntry", "Entry", "Text", "TSpinbox", "Spinbox", "TCombobox"):
+            return   # 입력칸에서는 원래 복사 동작
+        if self.sel and self.sel["text"]:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(self.sel["text"])
+            self.status.set(f"복사했습니다 ({len(self.sel['text'])}자)")
+
+    def mark_selection(self):
+        if not self.sel:
+            return
+        p = self.sel["page"]
+        try:
+            self.push_undo()
+            page = self.doc[p]
+            with unrotated(page):
+                a = page.add_highlight_annot(self.sel["rects"])
+                a.set_colors(stroke=hex2rgb(self.mark_color))
+                a.update()
+            self.dirty = True
+            self.clear_selection()
+            self.render()
+            self.status.set("선택한 글자를 색칠했습니다.")
+        except Exception as ex:
+            messagebox.showerror(APP, f"색칠 실패:\n{ex}")
+
+    def pan_start(self, e):
+        self.panning = True
+        self.cv.scan_mark(e.x, e.y)
+        self.cv.configure(cursor="fleur")
+
+    def pan_move(self, e):
+        if self.panning:
+            self.cv.scan_dragto(e.x, e.y, gain=1)
+
+    def pan_end(self, e=None):
+        self.panning = False
+        self.cv.configure(cursor="")
+
+    def on_context(self, e):
+        if not self.doc:
+            return
+        cx, cy = self.cv.canvasx(e.x), self.cv.canvasy(e.y)
+        p = self.page_at(cx, cy)
+        if p is not None:
+            self.page_no = p
+            self.update_page_label()
+        m = tk.Menu(self.root, tearoff=0)
+        if self.sel:
+            m.add_command(label="복사", accelerator="Ctrl+C", command=self.copy_selection)
+            m.add_command(label="선택한 글자로 북마크 추가", accelerator="Ctrl+B", command=self.add_bookmark_now)
+            m.add_command(label="선택한 글자 색칠", command=self.mark_selection)
+            m.add_command(label="선택 해제", command=self.clear_selection)
+            m.add_separator()
+        m.add_command(label="이 쪽 북마크", command=lambda: (self.clear_selection(), self.add_bookmark_now()))
+        m.add_command(label="즐겨찾기에 추가", accelerator="Ctrl+D", command=self.add_favorite_now)
+        m.add_separator()
+        m.add_command(label="이 쪽 왼쪽으로 회전", command=lambda: self.rotate_pages([self.page_no], -90))
+        m.add_command(label="이 쪽 오른쪽으로 회전", command=lambda: self.rotate_pages([self.page_no], 90))
+        m.add_command(label="이 쪽 캡쳐", command=lambda: self.capture(self.page_no, None))
+        m.tk_popup(e.x_root, e.y_root)
 
     # ---------- 스크롤 · 쪽 이동 · 배율 ----------
     def on_canvas_enter(self, e):
@@ -2728,15 +2944,17 @@ class App:
                 return
         self.cv.yview_scroll(direction * amount, "units")
 
-    def goto(self, p):
+    def goto(self, p, frac=None):
         if not self.doc or not 0 <= p < len(self.doc):
             return
         if self.view == "single":
             self.page_no = p
             self.render(goto=p)
+            if frac:
+                self.scroll_to(p, frac)
         else:
             self._sync_page = False
-            self.scroll_to(p)
+            self.scroll_to(p, frac)
             self.page_no = p
             self.update_page_label()
             self.update_visible()
@@ -3284,7 +3502,7 @@ class App:
 
 
 # 문서별 값은 지금 탭(self.tab)에 저장 → 기존 코드의 self.doc, self.page_no 등이 그대로 탭 단위로 동작
-for _n in ("doc", "path", "page_no", "undo", "items_cache", "annot_cache", "mats", "sizes", "slots", "imgs",
+for _n in ("doc", "path", "page_no", "undo", "items_cache", "words_cache", "annot_cache", "mats", "sizes", "slots", "imgs",
            "_sizes_key"):
     setattr(App, _n, property(lambda self, _n=_n: getattr(self.tab, _n),
                               lambda self, v, _n=_n: setattr(self.tab, _n, v)))

@@ -46,6 +46,7 @@ S.messagebox.showwarning = _fail("showwarning")
 S.messagebox.showinfo = lambda *a, **k: print("   (info)", a[1] if len(a) > 1 else a)
 S.messagebox.askyesno = lambda *a, **k: True
 S.messagebox.askyesnocancel = lambda *a, **k: False
+S.ask_text = lambda parent, title, prompt, initial="": initial   # 이름 입력창은 기본값 그대로
 
 
 def make_pdf(path, rotate_second=True):
@@ -138,14 +139,40 @@ app.wheel_page.set(False)
 app.goto(0)
 pump(0.2)
 
+step("아래 상태줄 보기 아이콘")
+check(len(app.view_icons) == 5, "보기 방식 아이콘 5개")
+
+step("뷰어 모드 글자 선택 → 북마크 이름")
+app.app_mode.set("view")
+app.set_app_mode()
+w = app.words_for(0)
+check(len(w) > 3, "단어 목록")
+app.select_text(0, fitz.Point(70, 95), fitz.Point(200, 95))
+check(app.sel and app.sel["text"].startswith("Hello"), f"선택 글자: {app.sel and app.sel['text']!r}")
+check(len(app.cv.find_withtag("tsel")) > 0, "선택 표시")
+app.copy_selection()
+check(root.clipboard_get().startswith("Hello"), "Ctrl+C 복사")
+bm = app.new_bookmark()
+check(bm and bm["name"].startswith("Hello") and bm["page"] == 0 and "pos" in bm, f"북마크: {bm}")
+app.select_text(0, fitz.Point(70, 95), fitz.Point(200, 140))
+check("\n" in app.sel["text"], "여러 줄 선택")
+n_hl = len(list(app.doc[0].annots()))
+app.mark_selection()
+check(len(list(app.doc[0].annots())) == n_hl + 1, "선택 글자 색칠")
+app.do_undo()
+app.clear_selection()
+app.dirty = False
+app.goto(0, 0.5)
+pump(0.2)
+
 step("뷰어 / 편집 모드")
 app.app_mode.set("view")
 app.set_app_mode()
-check(app.tool_mb.winfo_manager() == "", "뷰어 모드에서 도구 숨김")
+check(app.toolbtns.winfo_manager() == "", "뷰어 모드에서 도구 숨김")
 app.app_mode.set("edit")
 app.set_app_mode()
 pump(0.2)
-check(app.tool_mb.winfo_manager() != "", "편집 모드에서 도구 표시")
+check(app.toolbtns.winfo_manager() != "", "편집 모드에서 도구 표시")
 for k, _ in S.TOOLS:
     app.pick_tool(k)
     pump(0.05)
