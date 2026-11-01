@@ -16,3 +16,4 @@ jobs:
       - env:
           PYTHONIOENCODING: utf-8
         run: python tests/tmp_freetext.py
+# r2
