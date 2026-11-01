@@ -196,7 +196,8 @@ HELP_TEXT = [
      "· 🖍 색칠: 글자를 클릭하거나 영역을 끌어서 형광펜 — [색상표 ▾]에서 24가지 색 또는 직접 고르기\n"
      "· ■ 감추기: 영역을 끌면 아래 내용을 지우고 검정/흰색으로 덮음 (개인정보 가리기)\n"
      "· ◻ 도형: 사각형·원·선·화살표를 끌어서 그리기 (Shift = 정사각형·정원)\n"
-     "· 💬 메모: 클릭한 곳에 메모 붙이기 → 쪽 오른쪽에 쪽지로 펼쳐 보임 (쪽지를 더블클릭하면 수정)\n"
+     "· 💬 메모: 클릭한 곳에 노란 글상자로 붙음 (본문에 내용이 보임). 끌어서 옮기기 · 클릭해서 고치기\n"
+     "   [도구 → 메모]에서 '아이콘 + 오른쪽 쪽지' 방식으로 바꿀 수 있음\n"
      "· ⌫ 지우개: 색칠·도형·메모를 클릭해서 지우기\n"
      "· ✂ 캡쳐(Ctrl+Shift+C): 영역을 끌면 클립보드로 복사 → 한글·카톡 등에 Ctrl+V\n", ""),
     ("■ 페이지", "h2"),
@@ -226,7 +227,11 @@ BOX_SHAPES = ("사각형", "원", "타원", "삼각형")      # 영역을 끌어
 TOOLS = [("edit", "✎ 글자수정"), ("mark", "🖍 색칠"), ("hide", "■ 감추기"), ("shape", "◻ 도형"),
          ("memo", "💬 메모"), ("erase", "⌫ 지우개"), ("capture", "✂ 캡쳐")]
 TOOL_LABEL = dict(TOOLS)
-LIMIT_DEFAULTS = {"fav_max": 100, "bm_max": 200, "recent_max": 20}
+LIMIT_DEFAULTS = {"fav_max": 100, "bm_max": 200, "recent_max": 200}
+MEMO_FILL = (1, 0.97, 0.77)        # 본문 메모 상자 바탕 (연한 노랑)
+MEMO_TEXT = (0.24, 0.16, 0.0)      # 본문 메모 글자 (진한 갈색)
+MEMO_FS = 10                       # 본문 메모 글자 크기(pt)
+MEMO_BOX_W = 180                   # 본문 메모 상자 폭(pt)
 MARGIN = 12      # 화면 가장자리 여백(px)
 GAP = 12         # 쪽 사이 간격(px)
 VIEWS = [("single", "한 쪽씩", 1), ("cont", "연속 스크롤", 1), ("cont2", "2쪽씩 나란히", 2),
@@ -1593,6 +1598,11 @@ class App:
         self._wall_key = None
         self._wall_img = None
         self._last_tool = "edit"
+        if pr.get("recent_max") == 20 and not pr.get("_recent200"):    # 예전 기본값(20) → 200
+            pr["recent_max"] = 200
+        pr["_recent200"] = True
+        self.memo_style = tk.StringVar(value=pr.get("memo_style", "box"))   # box=본문에 글상자 / note=아이콘+쪽지
+        self.memo_drag = None
         self._icons = {}         # (light/dark, 이름) → PhotoImage
         self.icon_users = []     # (위젯, 아이콘 이름, 영역 top/bottom/menu)
         self.memo_side = tk.BooleanVar(value=pr.get("memo_side", True))   # 메모를 오른쪽에 펼쳐 보기
@@ -1698,6 +1708,12 @@ class App:
         sm_.add_separator()
         sm_.add_command(label="선 색 고르기...", command=self.pick_shape_color)
         tm.add_cascade(label="도형", menu=sm_)
+        mm = tk.Menu(tm, tearoff=0)
+        mm.add_radiobutton(label="본문에 글상자로 붙이기 (내용이 바로 보임)", value="box", variable=self.memo_style,
+                           command=lambda: self.conf["prefs"].update(memo_style="box"))
+        mm.add_radiobutton(label="아이콘 + 오른쪽 쪽지", value="note", variable=self.memo_style,
+                           command=lambda: self.conf["prefs"].update(memo_style="note"))
+        tm.add_cascade(label="메모", menu=mm)
         km = tk.Menu(tm, tearoff=0)
         km.add_command(label="해상도", state="disabled")
         for v in ("96", "150", "200", "300", "600"):
@@ -2416,7 +2432,7 @@ class App:
                   external_open=self.ext_open.get(), search_sub=self.search_panel.sub.get(),
                   search_body=self.search_panel.body.get(), cap_preview=self.cap_preview.get(),
                   wheel_page=self.wheel_page.get(), app_mode=pr.get("start_mode", self.app_mode.get()),
-                  memo_side=self.memo_side.get())
+                  memo_side=self.memo_side.get(), memo_style=self.memo_style.get())
         try:
             pr["cap_dpi"] = int(float(self.cap_dpi.get()))
         except ValueError:
@@ -2469,11 +2485,12 @@ class App:
         if not self.conf["recent"]:
             m.add_command(label="(없음)", state="disabled")
         else:
-            for i, p in enumerate(self.conf["recent"][:20]):
+            for i, p in enumerate(self.conf["recent"][:30]):
                 m.add_command(label=f"{i + 1}. {os.path.basename(p)}   —  {os.path.dirname(p)}",
                               command=lambda p=p: self.open_path(p))
             m.add_separator()
-            m.add_command(label="최근 본 파일 목록 보기", command=lambda: self.show_side(self.recent_panel))
+            m.add_command(label=f"최근 본 파일 목록 보기 (전체 {len(self.conf['recent'])}개)",
+                          command=lambda: self.show_side(self.recent_panel))
             m.add_command(label="목록 지우기", command=self.clear_recent)
         if hasattr(self, "recent_panel"):
             self.recent_panel.refresh()
@@ -3385,7 +3402,7 @@ class App:
             lst = []
             with unrotated(page):
                 for a in page.annots() or []:
-                    lst.append((fitz.Rect(a.rect), a.type[0], a.info.get("content", "")))
+                    lst.append((fitz.Rect(a.rect), a.type[0], a.info.get("content", ""), a.xref))
             self.annot_cache[p] = lst
         return self.annot_cache[p]
 
@@ -3466,9 +3483,9 @@ class App:
 
     def annot_at(self, p, pt):
         found = None
-        for rect, typ, content in self.annots_for(p):
+        for rect, typ, content, _x in self.annots_for(p):
             if pt in rect:
-                found = (rect, typ, content)
+                found = (rect, typ, content, _x)
         return found
 
     def on_root_resize(self, e=None):
@@ -3559,8 +3576,16 @@ class App:
             return
         mode = self.mode.get()
         an = self.annot_at(p, pt)
-        if an and an[1] == fitz.PDF_ANNOT_TEXT and an[2]:
+        if an and an[1] in (fitz.PDF_ANNOT_TEXT, fitz.PDF_ANNOT_FREE_TEXT) and an[2]:
             self.status.set("💬 " + an[2].replace("\n", " ")[:120])
+        if (self.app_mode.get() == "edit" and mode in ("memo", "edit") and an
+                and an[1] == fitz.PDF_ANNOT_FREE_TEXT):      # 본문 메모: 끌어서 옮기기 / 클릭해서 고치기
+            x0, y0, x1, y1 = self.page_to_canvas_rect(p, an[0])
+            self.cv.create_rectangle(x0 - 2, y0 - 2, x1 + 2, y1 + 2, outline="#f6a53f", width=2, dash=(4, 2),
+                                     tags="hl")
+            self.cv.configure(cursor="fleur")
+            self.status.set("메모: 끌어서 옮기기 · 클릭해서 고치기 · 💬 " + (an[2] or "").replace("\n", " ")[:80])
+            return
         if self.app_mode.get() == "view":   # 뷰어 모드: 편집칸 표시 없음, 글자 위에서는 글자 선택 커서
             if self.panning:
                 self.cv.configure(cursor="fleur")
@@ -3596,6 +3621,13 @@ class App:
             return
         cx, cy = self.cv.canvasx(e.x), self.cv.canvasy(e.y)
         p = self.page_at(cx, cy)
+        self.memo_drag = None
+        if p is not None and self.mode.get() in ("memo", "edit"):
+            an = self.annot_at(p, self.canvas_to_page(p, cx, cy))
+            if an and an[1] == fitz.PDF_ANNOT_FREE_TEXT:     # 본문 메모를 잡음
+                self.memo_drag = [p, an[0], an[3], cx, cy, False]
+                self.press = None
+                return
         self.press = (cx, cy, p) if p is not None else None
         self.dragging = False
 
@@ -3620,6 +3652,17 @@ class App:
     def on_drag(self, e):
         if self.panning:
             self.pan_move(e)
+            return
+        if self.memo_drag:
+            p, rect, xref, sx, sy, _ = self.memo_drag
+            cx, cy = self.cv.canvasx(e.x), self.cv.canvasy(e.y)
+            if abs(cx - sx) + abs(cy - sy) > 4:
+                self.memo_drag[5] = True
+                x0, y0, x1, y1 = self.page_to_canvas_rect(p, rect)
+                dx, dy = self.memo_shift(p, x0, y0, x1, y1, cx - sx, cy - sy)
+                self.cv.delete("sel")
+                self.cv.create_rectangle(x0 + dx, y0 + dy, x1 + dx, y1 + dy, outline="#f6a53f", width=2,
+                                         dash=(5, 3), fill="#fff6c8", stipple="gray50", tags="sel")
             return
         if self.selecting:
             p, a, _ = self.selecting
@@ -3667,6 +3710,17 @@ class App:
     def on_release(self, e):
         if self.panning:
             self.pan_end(e)
+            return
+        if self.memo_drag:
+            p, rect, xref, sx, sy, moved = self.memo_drag
+            self.memo_drag = None
+            self.cv.delete("sel")
+            self.page_no = p
+            if moved:
+                cx, cy = self.cv.canvasx(e.x), self.cv.canvasy(e.y)
+                self.move_memo(p, xref, rect, cx - sx, cy - sy)
+            else:
+                self.memo_at(fitz.Point((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2))
             return
         if self.selecting:
             p, a, moved = self.selecting
@@ -3727,7 +3781,7 @@ class App:
             if it:
                 self.do_area(mode, it["rect"])
         elif mode == "memo":
-            self.memo_at(pt)
+            self.memo_at(pt, (x1, y1))
         elif mode == "erase":
             self.erase_at(pt)
 
@@ -3744,7 +3798,7 @@ class App:
         """p쪽 메모를 쪽 오른쪽 칸에 노란 쪽지로 표시 (메모 아이콘과 점선으로 연결)"""
         self.cv.delete(f"memo{p}")
         x, y, w, h = self.slots[p]
-        notes = [(r, c) for r, t, c in self.annots_for(p) if t == fitz.PDF_ANNOT_TEXT]
+        notes = [(r, c) for r, t, c, _x in self.annots_for(p) if t == fitz.PDF_ANNOT_TEXT]
         notes.sort(key=lambda n: (n[0].y0, n[0].x0))
         fam = self.theme.get("font_family") or "맑은 고딕"
         try:
@@ -4318,40 +4372,111 @@ class App:
         dlg.wait_window()
         return res["v"]
 
-    def memo_at(self, pt):
-        page = self.doc[self.page_no]
-        xref, content = None, ""
+    def memo_at(self, pt, cxy=None):
+        """메모 만들기/고치기. 본문 글상자(기본) 또는 아이콘+쪽지"""
+        p = self.page_no
+        page = self.doc[p]
+        hit = None
         with unrotated(page):
-            for a in page.annots(types=[fitz.PDF_ANNOT_TEXT]) or []:
+            for a in page.annots(types=[fitz.PDF_ANNOT_TEXT, fitz.PDF_ANNOT_FREE_TEXT]) or []:
                 if pt in a.rect:
-                    xref, content = a.xref, a.info.get("content", "")
-        res = self.memo_dialog(content, existing=xref is not None)
+                    hit = (a.xref, a.type[0], a.info.get("content", ""), fitz.Rect(a.rect))
+        res = self.memo_dialog(hit[2] if hit else "", existing=hit is not None)
         if not res:
             return
         action, text = res
-        if action == "save" and not text.strip() and xref is None:
+        if action == "save" and not text.strip() and hit is None:
             return
+        box = (hit[1] == fitz.PDF_ANNOT_FREE_TEXT) if hit else (self.memo_style.get() == "box")
         try:
             self.push_undo()
-            page = self.doc[self.page_no]
-            with unrotated(page):
-                if xref is not None:
-                    a = page.load_annot(xref)
-                    if action == "delete" or not text.strip():
-                        page.delete_annot(a)
+            page = self.doc[p]
+            if hit and (action == "delete" or not text.strip()):
+                with unrotated(page):
+                    page.delete_annot(page.load_annot(hit[0]))
+                msg = "메모를 지웠습니다."
+            elif box:
+                if hit:            # 고치기: 같은 자리(왼쪽 위 기준)에 새 크기로 다시 만듦
+                    x0, y0, _, _ = self.page_to_canvas_rect(p, hit[3])
+                    with unrotated(page):
+                        page.delete_annot(page.load_annot(hit[0]))
+                else:
+                    if cxy is None:
+                        x0, y0, _, _ = self.page_to_canvas_rect(p, fitz.Rect(pt, pt))
                     else:
+                        x0, y0 = cxy
+                self.create_memo_box(p, x0, y0, text)
+                msg = "메모를 붙였습니다. 메모를 끌어서 옮기거나 클릭해서 고칠 수 있습니다."
+            else:
+                with unrotated(page):
+                    if hit:
+                        a = page.load_annot(hit[0])
                         a.set_info(content=text)
                         a.update()
-                else:
-                    a = page.add_text_annot(pt, text, icon="Comment")
-                    a.set_info(title="메모", content=text)
-                    a.set_colors(stroke=(1, 0.82, 0))
-                    a.update()
+                    else:
+                        a = page.add_text_annot(pt, text, icon="Comment")
+                        a.set_info(title="메모", content=text)
+                        a.set_colors(stroke=(1, 0.82, 0))
+                        a.update()
+                msg = "메모를 저장했습니다. 오른쪽 쪽지 또는 마우스를 올리면 내용이 보입니다."
             self.dirty = True
-            self.refresh_pages([self.page_no])
-            self.status.set("메모를 저장했습니다. 메모 위에 마우스를 올리면 내용이 보입니다.")
+            self.refresh_pages([p])
+            self.status.set(msg)
         except Exception as ex:
             messagebox.showerror(APP, f"메모 실패:\n{ex}")
+
+    @staticmethod
+    def memo_box_height(text, fs=MEMO_FS, width=MEMO_BOX_W):
+        """글 길이로 상자 높이(pt) 어림"""
+        per_line = max(6, int((width - 6) / (fs * 1.02)))
+        n = 0
+        for line in (text or " ").split("\n"):
+            wide = sum(1.0 if ord(ch) > 0x2E80 else 0.55 for ch in line)    # 한글은 넓게, 영문·숫자는 좁게
+            n += max(1, -(-int(wide) // per_line))
+        return n * fs * 1.45 + 8
+
+    def memo_shift(self, p, x0, y0, x1, y1, dx, dy):
+        """메모 상자가 쪽 밖으로 나가지 않게 이동량 조정"""
+        sx, sy, sw, sh = self.slots[p]
+        dx = min(max(dx, sx - x0), sx + sw - x1)
+        dy = min(max(dy, sy - y0), sy + sh - y1)
+        return dx, dy
+
+    def create_memo_box(self, p, cx, cy, text):
+        """화면 좌표 (cx, cy)를 왼쪽 위로 하는 본문 메모 글상자 (회전된 쪽에서도 화면 기준으로 가로 상자)"""
+        page = self.doc[p]
+        rot = page.rotation
+        z = self.zoom
+        w, h = MEMO_BOX_W * z, self.memo_box_height(text) * z
+        sx, sy, sw, sh = self.slots[p]
+        cx = min(max(cx, sx), sx + sw - w)
+        cy = min(max(cy, sy), sy + sh - h)
+        r = fitz.Rect(self.canvas_to_page(p, cx, cy), self.canvas_to_page(p, cx + w, cy + h)).normalize()
+        with unrotated(page):
+            an = page.add_freetext_annot(r, text, fontsize=MEMO_FS, text_color=MEMO_TEXT, fill_color=MEMO_FILL,
+                                         rotate=rot)
+            an.set_border(width=0.8)
+            an.set_info(title="메모")
+            an.update()
+
+    def move_memo(self, p, xref, rect, dx, dy):
+        x0, y0, x1, y1 = self.page_to_canvas_rect(p, rect)
+        dx, dy = self.memo_shift(p, x0, y0, x1, y1, dx, dy)
+        if abs(dx) + abs(dy) < 1:
+            return
+        r = fitz.Rect(self.canvas_to_page(p, x0 + dx, y0 + dy), self.canvas_to_page(p, x1 + dx, y1 + dy)).normalize()
+        try:
+            self.push_undo()
+            page = self.doc[p]
+            with unrotated(page):
+                an = page.load_annot(xref)
+                an.set_rect(r)
+                an.update()
+            self.dirty = True
+            self.refresh_pages([p])
+            self.status.set("메모를 옮겼습니다. (Ctrl+Z 되돌리기)")
+        except Exception as ex:
+            messagebox.showerror(APP, f"메모 옮기기 실패:\n{ex}")
 
     def erase_at(self, pt):
         page = self.doc[self.page_no]

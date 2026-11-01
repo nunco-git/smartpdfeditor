@@ -344,6 +344,49 @@ check(sp.hit_idx == (i0 + 2) % len(sp.hits), "Enter = 다음")
 shot("7_find_in_file")
 app.clear_selection()
 
+step("본문 메모 (글상자) 붙이기·옮기기·고치기")
+check(app.limit("recent_max") == 200, "최근 파일 기본 200개")
+app.memo_style.set("box")
+app.view_var.set(S.VIEW_LABEL["cont"])
+app.on_view()
+app.goto(0)
+pump(0.3)
+app.page_no = 0
+_md = app.memo_dialog
+app.memo_dialog = lambda initial="", existing=False: ("save", "본문에 보이는 메모\n두 번째 줄")
+sx0, sy0, sw0, sh0 = app.slots[0]
+app.memo_at(app.canvas_to_page(0, sx0 + 60, sy0 + 300), (sx0 + 60, sy0 + 300))
+pg0 = app.doc[0]
+ft = [(a.xref, fitz.Rect(a.rect), a.info.get("content")) for a in pg0.annots(types=[fitz.PDF_ANNOT_FREE_TEXT])]
+txt0 = pg0.get_text()
+del pg0
+check(len(ft) == 1 and "본문에 보이는 메모" in ft[0][2], f"글상자 메모 {ft}")
+check("본문에 보이는 메모" in txt0, "본문 글자로 들어감 (검색 가능)")
+shot("9_memo_box")
+if ft:
+    xref, r0, _ = ft[0]
+    app.move_memo(0, xref, r0, 80, 40)
+    pg0 = app.doc[0]
+    r1 = fitz.Rect(pg0.load_annot(xref).rect)
+    del pg0
+    check(abs((r1.x0 - r0.x0) - 80 / app.zoom) < 2 and abs((r1.y0 - r0.y0) - 40 / app.zoom) < 2, f"메모 옮기기 {r0} → {r1}")
+    app.memo_dialog = lambda initial="", existing=False: ("save", "고친 메모 내용")
+    app.memo_at(fitz.Point((r1.x0 + r1.x1) / 2, (r1.y0 + r1.y1) / 2))
+    pg0 = app.doc[0]
+    contents = [a.info.get("content") for a in pg0.annots(types=[fitz.PDF_ANNOT_FREE_TEXT])]
+    del pg0
+    check(contents == ["고친 메모 내용"], f"메모 고치기 {contents}")
+app.page_no = 1          # 회전된 쪽
+sx1, sy1, _, _ = app.slots[1]
+app.memo_dialog = lambda initial="", existing=False: ("save", "회전된 쪽 메모")
+app.memo_at(app.canvas_to_page(1, sx1 + 40, sy1 + 40), (sx1 + 40, sy1 + 40))
+pg1 = app.doc[1]
+n1 = len(list(pg1.annots(types=[fitz.PDF_ANNOT_FREE_TEXT])))
+del pg1
+check(n1 == 1, "회전된 쪽에도 메모")
+app.memo_dialog = _md
+app.do_undo(); app.do_undo(); app.do_undo(); app.do_undo()
+
 step("회전 / 쪽 범위")
 rot = app.doc[2].rotation
 app.rotate_pages([2], 90)
