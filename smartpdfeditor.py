@@ -2138,18 +2138,12 @@ class App:
                 stats_call(f"{base}/installs/{iid}.json", "PATCH", rec)
             except Exception:
                 return
-            try:
-                self.root.after(0, lambda: pr.__setitem__("stats_first", True))
-            except Exception:
-                pass
+            pr["stats_first"] = True   # 딕셔너리 값 하나만 바꿈 — 저장은 종료할 때
             try:
                 stats_call(f"{base}/daily/{today}/{iid}.json", "PUT", True)
             except Exception:
                 return
-            try:
-                self.root.after(0, lambda: pr.__setitem__("last_ping", today))
-            except Exception:
-                pass
+            pr["last_ping"] = today   # 딕셔너리 값 하나만 바꿈 — 저장은 종료할 때
         threading.Thread(target=work, daemon=True).start()
 
     # ---------- UI ----------
