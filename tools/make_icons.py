@@ -99,6 +99,16 @@ def icons(S):
     arrow_head(d, P(18.8, 8.3), 95, 3.6 * K, BLUE)
     out["rot_many"] = im
 
+    # 전체 쪽 회전: 겹친 쪽 3장 + 둥근 화살표
+    im, d = new()
+    for i, (x, y) in enumerate(((5.5, 4.5), (7.2, 6.2), (8.9, 7.9))):
+        rr(d, (x, y, x + 5.6, y + 7.4), 0.6, fill="#ffffff", outline=S, width=int(1.0 * K))
+    d.arc(P(1.5, 1.5, 18.5, 18.5), 20, 290, fill=BLUE, width=int(1.8 * K))
+    t = math.radians(318)
+    tip = (K * (10 + 8.5 * math.cos(t)), K * (10 + 8.5 * math.sin(t)))
+    arrow_head(d, tip, 318 + 90, 5.0 * K, BLUE)
+    out["rot_all"] = im
+
     # 도구: 글자 수정 (T + 연필)
     im, d = new()
     d.line(P(2.5, 4, 10.5, 4), fill=S, width=int(2 * K))
@@ -246,8 +256,23 @@ def icons(S):
     return out
 
 
-def encode(im):
-    small = im.resize((SZ, SZ), Image.LANCZOS)
+def tab_close(S, hot):
+    """탭 닫기 × (16px). hot=True 이면 빨간 동그라미 위 흰 ×"""
+    n = 16 * K
+    im = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    col = S
+    if hot:
+        d.ellipse((1.5 * K, 1.5 * K, 14.5 * K, 14.5 * K), fill="#e53935")
+        col = "#ffffff"
+    w = int(1.7 * K)
+    d.line((5 * K, 5 * K, 11 * K, 11 * K), fill=col, width=w)
+    d.line((11 * K, 5 * K, 5 * K, 11 * K), fill=col, width=w)
+    return im
+
+
+def encode(im, size=SZ):
+    small = im.resize((size, size), Image.LANCZOS)
     b = io.BytesIO()
     small.save(b, "PNG", optimize=True)
     return base64.b64encode(b.getvalue()).decode()
@@ -256,6 +281,9 @@ def encode(im):
 def build():
     light = {k: encode(v) for k, v in icons("#3c4043").items()}   # 밝은 바탕용
     dark = {k: encode(v) for k, v in icons("#e8eaed").items()}    # 어두운 바탕용
+    for var, S in ((light, "#5f6368"), (dark, "#bdc1c6")):
+        var["tab_x"] = encode(tab_close(S, False), 16)
+        var["tab_x_hot"] = encode(tab_close(S, True), 16)
     return {"light": light, "dark": dark}
 
 
@@ -268,6 +296,10 @@ if __name__ == "__main__":
         for i, n in enumerate(names):
             for var, sh in (("light", sheet), ("dark", dsheet)):
                 im = Image.open(io.BytesIO(base64.b64decode(data[var][n]))).convert("RGBA")
+                if im.size != (SZ, SZ):
+                    im2 = Image.new("RGBA", (SZ, SZ))
+                    im2.paste(im, ((SZ - im.width) // 2, (SZ - im.height) // 2))
+                    im = im2
                 sh.alpha_composite(im, (10 + i * 34, 10))
                 sh.alpha_composite(im.resize((40, 40), Image.NEAREST), (5 + i * 34, 50)) if False else None
         out = Image.new("RGBA", (sheet.width, 220))

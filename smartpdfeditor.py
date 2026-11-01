@@ -192,7 +192,7 @@ HELP_TEXT = [
      "· 👁 뷰어 모드: 끌어서 글자 선택 → Ctrl+C 복사, Ctrl+B 선택한 글자로 북마크, 우클릭 메뉴\n"
      "· 휠 버튼(가운데 버튼)으로 끌면 화면 이동\n", ""),
     ("■ 도구 (Esc = 글자수정으로 돌아가기)", "h2"),
-    ("· ✎ 글자수정: 글자를 클릭 → 새 글자 입력 → Enter.  Ctrl+F 찾아 바꾸기\n"
+    ("· ✎ 글자수정: 글자를 클릭 → 새 글자 입력 → Enter.  Ctrl+H 찾아 바꾸기\n"
      "· 🖍 색칠: 글자를 클릭하거나 영역을 끌어서 형광펜 — [색상표 ▾]에서 24가지 색 또는 직접 고르기\n"
      "· ■ 감추기: 영역을 끌면 아래 내용을 지우고 검정/흰색으로 덮음 (개인정보 가리기)\n"
      "· ◻ 도형: 사각형·원·선·화살표를 끌어서 그리기 (Shift = 정사각형·정원)\n"
@@ -200,11 +200,13 @@ HELP_TEXT = [
      "· ⌫ 지우개: 색칠·도형·메모를 클릭해서 지우기\n"
      "· ✂ 캡쳐(Ctrl+Shift+C): 영역을 끌면 클립보드로 복사 → 한글·카톡 등에 Ctrl+V\n", ""),
     ("■ 페이지", "h2"),
-    ("· ⟲ ⟳ 지금 쪽 회전 (Ctrl+L / Ctrl+R) · [여러 쪽 회전]\n"
+    ("· 지금 쪽 회전 (Ctrl+L / Ctrl+R) · 여러 쪽 골라서 회전 · 전체 쪽 회전\n"
+     "· Ctrl+F 이 파일에서 찾기 (Enter·F3 다음, Shift+F3 이전)\n"
      "· [원하는 쪽만 저장] (Ctrl+E): 예) 7, 2, 10-12 → 그 쪽들만 새 PDF로\n", ""),
     ("■ 왼쪽 사이드바 (F9로 숨기기)", "h2"),
-    ("· 즐겨찾기(Ctrl+D) · 북마크(Ctrl+B) — 글자를 선택하고 추가하면 그 글자가 이름이 되고 그 위치로 이동\n"
-     "· 파일 검색(Ctrl+Shift+F): 폴더 안 PDF를 파일명·본문으로 찾기 → 결과를 즐겨찾기/북마크로 저장\n", ""),
+    ("· 즐겨찾기(Ctrl+D) · 북마크(Ctrl+B) — 글자를 선택하고 Ctrl+B 하면 묻지 않고 그 글자 이름으로 바로 추가\n"
+     "· 폴더에서 PDF 찾기(Ctrl+Shift+F): 파일명·본문으로 찾기 → 결과를 즐겨찾기/북마크로 저장\n"
+     "· 탭의 × 를 누르면 그 파일 닫기 (휠 버튼 클릭도 됨)\n", ""),
     ("■ 저장", "h2"),
     ("· Ctrl+S — 기본 이름은 '원본_수정.pdf' (원본은 그대로)\n"
      "· Ctrl+Z 되돌리기 (최근 30번)\n"
@@ -453,8 +455,54 @@ class TreePanel(ttk.Frame):
         self.changed(node)
 
 
+class Popup(tk.Toplevel):
+    """모든 대화상자: 누른 메뉴·버튼(마우스) 가까이에 뜸"""
+
+    def __init__(self, master=None, **kw):
+        super().__init__(master, **kw)
+        self.withdraw()                       # 자리 잡기 전에는 숨김 (깜빡임 방지)
+        self._want_grab = False
+        try:
+            self._px, self._py = self.winfo_pointerx(), self.winfo_pointery()
+        except tk.TclError:
+            self._px = self._py = 100
+        self.after_idle(self._place)
+
+    def _place(self):
+        if not self.winfo_exists():
+            return
+        self.update_idletasks()
+        w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+        try:   # geometry("600x620")처럼 크기를 정해 둔 창
+            gw, gh = (int(v) for v in self.geometry().split("+")[0].split("x"))
+            if gw > 1 and gh > 1:
+                w, h = max(w, gw), max(h, gh)
+        except ValueError:
+            pass
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        x = min(max(0, self._px - 40), max(0, sw - w - 8))
+        y = min(max(0, self._py + 14), max(0, sh - h - 70))
+        self.geometry(f"+{x}+{y}")
+        self.deiconify()
+        self.lift()
+        if self._want_grab:
+            self.after(30, self._do_grab)
+
+    def _do_grab(self):
+        try:
+            if self.winfo_exists():
+                super().grab_set()
+        except tk.TclError:
+            pass
+
+    def grab_set(self):
+        if self.winfo_viewable():
+            return super().grab_set()
+        self._want_grab = True                # 보이기 시작하면 잡음
+
+
 def ask_text(parent, title, prompt, initial=""):
-    dlg = tk.Toplevel(parent)
+    dlg = Popup(parent)
     dlg.title(title)
     dlg.transient(parent.winfo_toplevel())
     dlg.resizable(False, False)
@@ -697,6 +745,7 @@ ICON_DATA = {
         "rot_l": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADtElEQVR42o1UTWhcVRT+zr33zU+SqZPmx0yazFjIwiZFF4FWREmx0bpRKDihKl2IgiCCghY1FGYizcSK6KJLRaGoSKK1FBXBRdKNKaXB1jYFFWsmCZk0iZPM5CXz5r1373GRpPlrqB/cxYVzvnPu+c79CBuRYoEeMs19U2fA3i8T3YkLrakbgXCjwxgBRmKLjPQhDSLGDqDNV6bW1Khlh6OjFIomtLPw6uS7TV9sy+pniS4YYDuxWudiASLjVMwkQBxj11bSCn0e75t8CCTykIKkDP/mGHs410Vzqzm0tds7hB1piIuA8bj8hFXTVOnPz8B4jmvV7nkTejVIAFbRL8Y/mvnUXlx4P09UXBvTNsL6m2CkUgIsYuz6Z9jzf7CMk/dns4eIvRFiBBjiUUj1gnV//K0qxuNVfdmnx9+j+Y2dbpshUqCNFe+GxOnpblFZ3atLhUthQ0/9sVy7hDQYRKy2aMToAXekWEVy6UDu+uAr+fmFOqM1G4CDwaCsq6m5NvxOQyaRyZLVED+1PD2eQg+9jTaWADRtrZ5MJuXAwIBueXB/x8GDB4aOPNkJwwxBBM/38dXX33h/FvMNk8PDC/EPc6MkrCbXdvfmevbMgZnUTs+anZ2VjbEGffzF5/WKHGAAdO6774vzM6RAZDgzcVZVxzLSTD0G4DzSQ1LsRKiUYs/zpDFGua6rtNaqUCwqAxakXLMyIH0ZBiyYHwaA9lyExGZBWN2q7txURAgBIrpzNkkoqQwwMdZ51BZB/JHVhfVrG1gppQEYy7IYAO+KRIiINEyYwEw4nWsjQWDwGACMxNpZrewQEO8bj8KqzFCp8FeW6OPovvYK27bltd+vS2MMhBBwymV4rre7qgqwiRiZ7DG9VNSS5eBqV4bWCQtRiNJtEQj5jj2178CXbfmZ2JGz5eXFKBvDDLBSARUMV1z9dfDnN5pO/XM0UPfAOe/f8fMT3YmjSLLEAK2uTT9LdJFu7pt8Rt1Xf0E79iU3EDo2/XpF9m6CxXsnD4tw5Fsm9o1XfmTiRP0tpFc+BG12ENLx3rGXZXXzZ3op70CXPjBl7yeY23+HAiHpoXo/C3Fc7oq9ZBy7aEr5wxMnW65s/M+03ZZIx3vHnqNg5BMZ2d3EbhnantMAhIw2EsDQy4Vhv1R4berk3qtrOTv4IYBkv8RAl65L3aiqqKx9loXVCeO1gJmhgldg9I/jJ+oGAfBaLO6Jfpb3jEmx+B+OvXFrmZAeWiG+OcsA0NGapItt4J3cGgD+AzPCzxIkp2I7AAAAAElFTkSuQmCC",
         "rot_r": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADvElEQVR42oVUXWibZRR+zvt+X/PT/DW23VLadCpTWCerdMgila7iQFSGCCnDXxTFK/EHUbsOk+CswrxQEGHgD+iNJMLAK6cT2wsHre7KroqrbknTdS6tTdO/5Pu+9z1epClLbbsD79VzzvMenvOcQ9gpmAnJEdkz6yf0AGtX3TSZ2m91DGePgswj04NtLyHBAinStRLahomQhsAAqc1I+/v5Z6U7dJrLxaxvrdg1meqyAeIabmzZFRFjACrywUyzW/hiSq3dDaUZrMNkul9ha5khzEjZ29oJ0CUwC1C1y3rCRBUIJ/4M+PyhtwH5AvkCAUMHqrgE7PkZi6TZYDS1Ntpz+fsBXOpLQowCmwirnenoe9kmGJ7vzHDLPfY/uSl1vfghQZ9ngsVk9pjaGbE1hdlyHgGLCBIJ0ToJrteQmZAE3emda1wT/L30BA/plYWh7Ju7h3ccWoIFUuD/a5iBQIrU6nA20dASPeRcy53IHu8cjvUdiRfm5w9UKhUlABJSUrgpVIjc1f/pUiRpjabI2fwH1YYQScw0N/gaLrO287k3Il3tsVjojkD42hOPHzNNw4BmhiDC2R/OYWxs/PDUHxOj8XhcZjKZOicYSI5IAI70olcGm332XP5LEOmF22KGp8VVeu6Zp4IAeF0e/dvEhCwUCnI7FUTPrJ8AQDAfgAYTq3EAIMPSGiwWSyVDKWVYlmVorQ3btqVhGLwt4caQQQJgYkmVOk2INp4Qoq7476YHBBJsALyxIMaFSA9XCfkKCQJgdoH5Z+y9j4hIBfx+BYCFEARAG4bBjuMwmOkCkQ28iHoN1w0pWf6kVkoK2j4GotO+7l7Ylh0e++VX4Xa5oLWGEEIuLy8j1NruXSTiznf+eo09wb2wV47nBqNFcM2HcZbIkOoYzp4xb4k+ahWuPJY/ceuZe/sf/KiyttrtOJZDAJEQ5PL6i62zZ58ef/Ji2O1r+11bZQPasys3GCyCaz7cBwYz4dT119XqYq/hDX8efTdfOj/U/vJWwu/+eLWzwSp/Ta5GD5dXjk4PhhaQZgkiRfWuJ91xcuqg8IR/FG5fQJVmvyCtvzKxMFG2ygpi1+3CZT4E6XlLNobdamH6+dzQns+QZlm7TPXnax1oO3m52/AEP5HeYAwgqOJVBqClr1lSgwtq6d88V5ZezQ3t+eZGsq3vYTwtkRlQACh6qtAPIR+GUzlY9Y05Rdo+t7oy920htX/5htybRILFTXPSvOW20A73n5CG6LsIGp3MVDdjX0s1P3lYgWjLbfkPvcylffs3pMcAAAAASUVORK5CYII=",
         "rot_many": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADKElEQVR42rVUPWxbVRT+zrnv5TmpTXAqCyklbmkHkLNhI7ng1sZpJRBS1MUgBgZAqF0ZUECALAuhClrxI7FUYmKM2UrFUuo8xZQqJQxIWCIUSgNR0lCauKZx4vfuOQyVC3FLU4Z+09W95+c7P98F7haqhLI6m+7KNQdlZfxv9DilJjWaPqHu7d6px5VuDVYmVCry0Bs/P2Dj0QkCngObYVXbArkn5frKR7+X95zHpBo8S5buTI0AKHYc+6PgMJ9kdyAaXv/zc1WZY6IhGO9FHhj0ZPXyK/NvJT9Nn/jWpc1kyjw1OzuEVgvWWgriD7IbrMrC3uMvyOCuZ8KNlSMLEyM/de2TRy/FyYsd48h9L3dai8WFiZEadcvMZrMRE9n2hWHeLVYs6EaPCAyWjVVZ+v7Q9FzzYrb0ar+X+iDwh2cJhzMBACTfX/qR2ElosDHbbaYSxWIARgPbeRrW3WvUPlyfOrNzeur0Tsue6kh2DwCcq37Y9isU4nAm6A6GbOc9HojHORI90GWoudxTCTWdb8h2HqvX6yu5fPGQMc4+a60C+rwSvmM2F1Xk16uJoU8a1WqAyUnGDyVN9l16hKLbv9T1a7XNO0RkwnCAxsfHYyD6zKoMgeCB4JCCRSyI6J37l64UAGipWgUAzL+5q2Hay/v6QnrN6Z1rNCp2bW2NoViuT51+CYDmCmOPiurxs/6Z2hP5sTQRbbvpUCEBlH55neYBwLnDxphssTjsWXvZQvuYsD2fzzshEGEm6TFWqBIA9MpGPc/jdc9jAAhcVwqFggBQAKHv+yHdON+GACmI/pGMtZZU1WROnWqOZTJNAglct1mpVEQVAsC9G5V2SyZrm+t9iGntyYPnxZ+2UOzob7XP5gpjARGNimCxVCqZxeWrWwZUADQzM3Mtm88f6DeRlAThoIKPQvVtZtPUQJa+rn81BwCP7y+2DdGWDBUAzvn+BQAX0um02x8b/JiIGGEIGE7uLx4cDSUQA9q9lfr/DU6n0yaRSPBf7eBdNiYvEioUrKCQiAiE34wER3zfv3Lz97iX+M9mlEolk0qlbsneaDSoWq3KPWfWxd9DoF6g1daJGAAAAABJRU5ErkJggg==",
+        "rot_all": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAESElEQVR42n1UW2xUVRRd+9wz75a+ZgRKO6XlEaWmmloSlIItGF9RfnTqLx8mhkT8EF8xNsOgpVCkSI34+NBUQciQmGCqftgXGALBTkobS6wplGlh+hjHjmXodObee7Yf02Jrwf1zPvY+66yz194LuFv4WcDPAvcI78Gblatbbl8tbrxxEAAe97Ocz8kl1cGghjoyAaCkaWIFC0sVGbMPQdphmslrgsU0iD4nIVYx+GGA6Syg5q/TYjDWUEdmof/qeovDcYikZYe2zH0nzQyAAZVKAmCYyXhcJNOl4UBpHMwEon+pzoMVN4Z3kj3vKEv7MmiWoCFxRpagbyoGdlyPVWkqmQvGX5COF4TFvoNJVANow2kIAKZcBLZvaKfIWv6VTEQgL7acS1w62YvklFuXtqfWFRYae/oHP6sD0nMUjq9qGq+QytQAAL7Mtwl+FgiAi/aPrpGO7H5Tc45kn/Z1PvuId9fG6u0gISCI0PbjT7hwqb92sO9899rdR21DW14z5nu9MASugABiwTisOXMc9lLrS7HLbb9veXIHF+TlzHZ1dBihnh59YiyiZ9nRXF3zxIltqQGFOjLhC2r/nQYCgLUNEY9us4whnbgYfre0etWaB/Z91LS/vrv7rFFWViofLN8ABpiI6EDTh+rq4JV1Hs/To6HQF0ZGpoUMAaSkelRb5taY1UmACUyCCMjKzsLGqkq0d3ah9evj9O3JU8rhcOjlFZUhu2uoFQD7/f5FDCUyT1SAGSTEAEAMWs/MDCJC9M8YIpExvL+3Hnl5+cJms8rfBq7k7np1t/duQy8WngRWAKCUgtVqVVJKBgC73Q6Px4P8/Dy4XC44nU5mRgoAulEjEGRtESAxwiBixaIYYFq5sgjfnfle9PSEyON2m8wKuq6DOdMu0zRpvv9nA7WL1M4A6to5lUwQgOcA4nxv+ac9v4a2RWOx4eFwWEvOzjIzQyk1tzEMJk0AoJLG4Rpvc3TbBj9bASYBX1AbeW/FdTMx1SsceT5vY7is/dQnkYG+UJfL6Wpt+fjYL/F4fMbtdhuapukAjJzcXIPZVCDBTLZWYq0jnX8rByBI+HwAEdPBG2+SxdYO3dYKYCsBfK7z54ZNm15sTqdvz3zZ+g0sFitAhOjkBFx6bLLoyHS9Jcvl1aM364f2FEXh75K0cPWKGkYOW+8rft2cmvwBmHk5/FbpOAF4bPPmV8bHJ916KqHzbCKVtbKswHzmUHV69fZadWviwsjM4FagRmEveM5tmBCEQB2Z3gOjx2R+0S7j72gcptFssGqL1K/rhRC4P5Uo0E9jsx5VbwgptvD0xHk2Us+PvOONZ9aEmJYYa4BU8YGxOiEtR7TsgkLWdajEZEZBRy6E0wUzHoVp6IHR2T8+QKDWmLeupX4IAH6/QCCglh+67LKjcCsztkMZlRAaSIhrrMxu5lTn6NslkTnJ74DdOxYM6v/X8BJC/wBZYfeRwH5nEAAAAABJRU5ErkJggg==",
         "t_edit": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACf0lEQVR42r2US2hTQRSG/5m5Nw910agUqoLShfigVltbkhp6yaORWmlBmE3RutGIIuhC17cjbsSNuK2C4ELwoiAoNIipkbppEB+FgiCCUDcR0k2tyb13Zlz0QYSmtkH8YeAsDh9nzn/OAf6xSG1s2zaplyiEAACF/y1iWZZRKBT8Y72pkUDQPOO6rgRgEEKo1tCA9hkzqJLy42Th1TWtNSGE6HpAY35+fvGbRLcHgsE0QAACKClBCAEhFIZpYmHhZzMAjI6OEgB6rR4SADqWSOwOm2ZrpeL7zEA7o+Ydz/ffKamuBwIBKrVXnsznP23ElBVZlnWUBTcXq25l/O3rfP9GemjUxJRzbgCQpXJ5CwBAw+Scs0gkQltaWqQQ4q8u05pYAZCO40illAIAQqAdx5FrwJZbRlcDNjLDeukpwKYNA23bpgD00JDVdCSeeXE4lugBhLJtm9JGYEIINTwQj3wtmbm+vezEzibjWUcskRRC6FWBhBCttVYAUavBLg7HI8VSOHchRrovdf+qSLDtzCCtALRRz33DMKjnVTfVwm4IoQYG4pGXn8O5K73oGtznVs89CYVmy9XsTHHiHuec/QF0HGfRXSnfSymTSrO5muOg2uLxyOxcOHd7EF3RXW515HEo+L3sZmeKE2OWZRmO4/jrdZMciGa2tkX7pp7fTGv9tLcyfCqj93Qkzi8twkphrB6Ec85mDh6kNucIh8OBquuN3zpJov373erZR6Hgmy8q++1Dfmz5uKzLUc45A4BkMtnRkziu715N68unM7q5LZUFgM7OTnOt1asrT+KQydSP+1N02pP+w9J0/sFSZV5DF70nnd7RlUptqxmguvP7G+snAjaMCTBQAAAAAElFTkSuQmCC",
         "t_mark": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACj0lEQVR42s2UzUuVURDGnznnvPfe16ul1UqoKNpE2KoWiXn8jKxtdxV908JV/Qcvdxe0CGoRGYRQi8qFGEikaR1SDNy5khaVbYLSDMy8ej6mxatiZmZU0LMd5jdnnpkzwH8iKhQK8q9T/xRKAAQA1DU099bpxlMAkCSJWIz9nrTWahF2s+lIG9c3tXJ9U0uyquDGyFprZYxxdbrxXJTJ3rHWWgAiiiJpre2el7g4OjDwCUstrKckSYQxxtVqfUDI6Ia1zgNQzIwQAphQPS9EKUkSAgC1Ad9wsLl5qwj0EECeOQQALKUUIYTXKrijY/1mdqy/nwDwei8krbUsFosh6/m+knKX985TKgaAEOxJY8znxWnzui1rraUxxtU2NF5TKtNinXNEJBnwSkXSW98+bMxLrbXq6uryS3libd/SIRyqazqRUZnL1llHqW8+UpFydqFj+MXgraVhrcwVaw2hWDSuandbTS4nO7z3gQDJzEEpJZ1zI0NmsL1QKEhjjF/T9CUxg4gYzNXxpQt7Xg6N52vymQUPkAARAHxwJdo/MtL/cTE3/BTIrBUexxI7KthNjd9WFfL0lXuxezBcrspj5lxWEgV7rK/v8JPOzueZs2fhvkcZTwT+YbFnenbtj7flRzlAqAxk91AcrvZU8qt37vzU22d3N/I/wW/O5DA7fRmS4uB8Fgszx7g0XePmXMhujsTEZNXUzu2V18EsIdL1WOETIx8RSq6T9va8TYETx6vwRX3ClgwwH4ASI8zNeF6YA3KVkHEkEEtahUoVGNgUAe+/ttK+R0/VikoWNkTwDOQIoqxSgqoADmmSDWv3uBxLlz0FzpRZYL4Xcy4Pu2xEuvv0i/vBzFCCEMTkPznl3wBuCjHahO3s8AAAAABJRU5ErkJggg==",
         "t_hide": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABjElEQVR42sVUsWoUURQ95963y4wJCRpEyy22E8FmO2Gn1DqlXbDRzlphpt8P0F6w2P2I/IZGZJmIRLtlwYzJ7LxjkSwYETITEjzwiseDc+89554HXDP45yXf3w/ZFUiyLGtICjcBSiJJTafTdHG8eu0W0lVzCtBajCf1k4TV8a93L/aefc7z3ML68ejopJdsWybELQkixMsIBUVEmamZAkBRFNfvx4UuRqPRTheGn+7aaBoOBoPFbDZrAJAAbDweW3n47T3JJ5IiAGvJGUlSUqlYPy3L8kcAEOfz+Tatt2tmva5zSoC7366b+ADA9wAAJEViKemOJP0txWVdSoKZ1wAQzqqIBFMAOj9dEAH0YkR/TWgkKwlf3O1hjN34SJikyqz+ujaFADQcDu+GkDw6V4ZtcwF3VnV1WB4cfOwoVcs9XEdvMplsbO7ce+Me0tXpCmatHFaSJFwsl29fvXz+6UL0+v377uaPnbal4K2cphDN3TZvpR9uInr/+A/z3NClSgEUxdkeX2Hd/hN+A/M5omSsJQvEAAAAAElFTkSuQmCC",
@@ -720,6 +769,8 @@ ICON_DATA = {
         "help": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADx0lEQVR42oWUTWhcVRTHf+fcNzPJTCZJbY01nbZUKeJH8atuhEqkInSjq4QWiqIu6kZBWqvExTiiDbZUC7qwLqSioE4VxEUVqQj1s9Rau9AKYjVJg630K85M5uO9e4+LmYbUpPiH9xb3Pn73vHv+/wMLqWhK0ZQryUwYLruFtqJ5K2VzjIgHKOw+u8yZ3WXBr0EVlWjc4nBkXOQE4Od+e0myEGzwhZM3RN35MSzcF2WyeY0iQAjBk8xUPOqOSByXxkcHP6NoSknCfGAHVhibeFTTPa9qlO6VZoVaM/GN2MyAdITkM86RzmFmWFzfM/HM4FMMlx37hwOIyVzY8h2nHnbZvn3WqkFIkmrL3I0DaVl/fYaejHLojwaHJ1ukHd6JoD1XO//P33snRguPt6EjXtolY6t2TK32qfQxwbo0tLjYFH1sbY5dG/ovu5V3j9XY9ulFuhxmSKLZRSlfPb9xcrTwAcUvI+UXBMS8yi5NZ7OEONRi1TsH0+za0M/ktOeJTy6w6f1zfDfRZPPtOTbflmO6iTgxZ62ZgMqem163HkpDXtkvfuXOM0sRWW+NijlwjThw73UZphuB7QcusvdwlQO/1nnkw/O0PGy8NYsTMEQtbph25ZfWan/dA2Jt2wR/t3Tnc1af9gni+rqEfT/WeO/4DNVWYNVVEfXYKPQ60g6mG4FgnY4KJhpZMO4HDkQAJtyiGhHABBCBemzUWkZK4exMoB4bfbXA0akWbx+tAdY2iSGERDC7edbYhsxLhQpECs0EHrojx7Jex2vfVnjwnbOoQD6jeJsTHkGBziswgYX2af9RIzG2rsuzbV2evowQrH3YHJChDjEmZyuMTA/FjWosItHlkYWuSHjlqwpLe5RGAk4WyDUGuINt4HDZ/d4cOLlCpo5rpmdtaFY9IrPBdwpv/VBFBDJO6E61q+zATF1KfL3SUKcH2788PAwlCWbynGGgarSThnWejzYv4acnr6XQ52gm7aa19y2R7n7FJzvHt19zum3sEfGUzU2OLvvcmpU9LrckQvBgwQxSCqsXp1jZ7+jtNELMzCzEUW5xylfPfT/w55kXKZry/JCX2asto4yIXzE29YbmFm2xZg180zc9Nph30t+t/Hwmtq4ITFzksv0kjco3po0HTm1dfqHtokvD4dLkKZpQklB4+fQmddGYRumV6iKarYQkGNlMhJkRWvWqEXZP/vbxS7y5JcZMELH58xCgWFRKpbD46RP57MCSISEMifk1Ig5DxwPydfD1L6aeXX5qtssd2JVVNsf/qWyuE6zL9C/CKdGyAmfarAAAAABJRU5ErkJggg==",
         "pdf": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACI0lEQVR42q1UPW8TQRB9s3s+wC6M4wTHUpAw+Igt5DgEIlEgXZVIkaC8Lr+E5mQk6ihFfkEKhK52kdItEkFxkA1pDCiFbYHBXXy+vaFwDvztGBjpSXurmXc77+0O8Pchxm1S/8fW7m7k/ORko9lsybHJRCylFNF49PNZuVyzLEs6jqNGCE3T1Eqlkvf4ydMXmczqq6XFOBgADf4PzAwhBarVauv0Q3nnvFZ7G9QOJJqmqQHA7XvGy9dvHMXMHWZWE9D9+OmMt3aetZZXUpsAYFmWnKSD77quACC63a7wfX8ESilt9b6hDvb3Yrncg6PlldSm4zjKtm0xVliiXptCiB6IerhcSymhlJKGkfYP9vdi+XzuKJtdNwqFAtu2LcRML4l6CNYApJTwPE8YRlrl13Kx+s9vdwFwpVIhbRoXdzoAM7jrgm6EgU4HFIn87gAAua7Lwmc3qJlMKCTc02N4X79Au5OCajQgEwlc23gEMPdLRP3Xb3LLBJCuI5TJggCQFJAL8ZkKTT6hUtBzawAR/HYb+vpDIJCcaOCUVyPsKxTRaHCz/xg0z3scR9rv8r8RXpFoPsI5YkRD3/cvPVFTC4M8HjJHG5omHA6HPQCerutTCaWUAOCHQiHheR6PJYzFbl5/d/xeu+hcaMwMQZMVYWaAgHq9gWQyqbW/NwYGLAHg7e3n6WarYbVabQnBBH+WAwKJpcX2rYXoYbFY/DE8sP9L/AITY+9MX8gEcwAAAABJRU5ErkJggg==",
         "plus": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABw0lEQVR42r1UzWoUQRD+qrpnZl1GdHNY2LcIBnMw6uyuv3jysq+Rm+dmX8CXyHEeQFEDdgQv/hA9zM2rC4KsIZuFmXR3eUhG4yKbISwp6ENXfVRRX9VXQDOj03f51qhqlmWpT9NIzWaH1lq3DMvLgsYYBgBHeieuwrfAvAkAo9FIXSjhmTauEXNHRKLzsNyQGiciQkSyooTSeMr0P84WCoY3b9+9SpLWvbI8Gtzv9/cmk4nq9Xq+Bo3HYwEgjae8lQ1fJknrkfPl5t7u7ocmCytZlqWO9A4TpSIigJAIiAgCwQ1Wai14/wmEae0PIqKVJuerZ++t3TfGsK4zz+fz5MrV60+jKIbIv9w7dwzvPaI43mD6y4qIQEca5cz3AOwXRUG67r3dbh8EcVtVBQ2c7G4IzMwhSKDncRxvHLtym4Av3pNSSrxzgHYaLfJfASDP89CMw/7wRRK3Hvvy6Ka19uMyrD77WVRAp9Ph6XQavv/4ebLQWqenGAXgz5TzPA91p2givdv94evhwydyZzC4uxLpARREJKxSKW2tNS9SdJHzRQDkVvZgPYn1Wqjmn621v2r/pRxY1QRkjOFut8tFUZyL/Q23HrwDKmB1lgAAAABJRU5ErkJggg==",
+        "tab_x": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABiklEQVR42s1ST08acRCd+e2KbFk5NOEzVDciqB/Ab+Dtd6p/utCiXnroFxj2rlET3YiQkk0vfgz2SjBkPRCPakLpRQ8tRtNdfuNFDEFM5GJ8p8nLvMmbNwPwTsE4zBCRYH7OvwgiEqPqV0Hm8x/7wiUiHQBgxd7IfM5tfnpseXKiDegQANC27VRMN86zmYXb/b2d+qXvq9Vcbt6IJ5qsouugeVqTUmqtVouHBwARiXa7fa9PxrummTycnp27yKazUdxIBGEUVb3K0Q8iEq7rKhi28hQfMyIif8lvrgPigRBCMbNXLbvfiUg4jsMAwP3+Z+EUi0UEALj7H9YRUZ+IxZK9KKoDAHQ6HW1QPHIFx3HU+tetxQ+GEYRRr9QLwwMzOfVrZnau/bNSahCR8H2fR4bo12pgX12lUI8FitWJV3G/Bc3GmZVO/zbNZNlKZzr7u9uNwRAHV2BA5G63e6MiXq4eH64BABYKhQmvUirf/vtbYMV/AAAsy+Kx/mL8R5JSG76QlFIbe9Cb4AEjy6ac7ASyVAAAAABJRU5ErkJggg==",
+        "tab_x_hot": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAACzElEQVR42nWTTWxUdRTFf/f//79XOv2aMgikJn7EHRJtCTZFFoSVaxePvamJwZ0JhpiYvA6GLQtDTIxCDPIRmLAhYtGwaKJUArJpS01cmHTEIInTdL5n3rz3vy6mSMFwVveem3s25xx4BhpFlufgShRZBdnKPbXEYIrgHx3aM+zT0cNCNukwZPhyN7M3X7p9+y8ABRHQpwQ0iqyUStnfb7/1fmhM0SIToQgIZKp0lUaCP3OtnX38wb17vcciAqBxbKRY9H/O7P9iexgcbXQSetZkqCoA1oppt20+CKg5e0vrnXd2Ly21AIxGkZVi0Zdnpme3h8HRjU43zfJ5T5JYMcZJEDitVq19fa9WX3m1l/f+YDq07TRAKYqMnVtd5cNDe4bx4XyW9gY0n5ddl68akoTuL4tor0f4xpvs/PaiaK1m1xcW0vGRkX2ViV3XZ364+cAJ6MNu7vCwM/m6WE+lYutff8nYseNou0WyssLO85doXf+O2unPkdFRxHtVlSPAXQeghn2hESFVlYEB6mfPoO02Y8eOgyrN0mU2Tn6GDA6iIJmqYHQKwACIyhM7jUGcI7l/vz/nciS/raKdDgQBqPb9o//jNk1cy1TBGNFmk3ByihfOXaB5tUSyvMz43AkkCGmc+wZTKKgTPKrl/wTEd76vZ0OJTVOnhYLu+OqstG/Ms3EiRpMEGQjJf/IpIkLt4nlsoWAkSa8AWI0iO/LjQv2jFyd2jIfhgVaSpL2VZdu4dAFxDhkbo7u4iG80SNfX06HymqsauZOpnTs1O+tFQYgRVpGHD6Z/Kjh74FG1mplcThERVBFrNavVGA1Dlw4OVpqk0y///OsfGsdGHmebOJbK/PywOj21zQWzRpVsM4hGwFpHI00Xa93We6/dXfpd+7R/0oUtBfnn4PRM6vVdhSkLKkgZY66tdXo39vd7YAT8/+qqILpp7fPw7P1fjOxQoW5mTJ4AAAAASUVORK5CYII=",
     },
     "dark": {
         "open": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAB4ElEQVR42s2UPWvUQRDGf7O7/3vJ5S6JGlNoJYithYWIkHwA29R+BW21OPIJ/A4iiIWFoIWV0QNtDHaWmkKDBIx54XK52//uY5FcopiEC0ZwYGBgZ5955pnZhf/dbBjo1Wz443RxLtvCQj7VimrjTpIf9tjVeivc8Y5aSqasrMZ44bqb8ZndfvNB7bYblakB6PnNqf6WX6u2KhAFCIIjbse1MuZb9Svd93y6ZEyvHg069zqZoV3doldK+j7YjBNlkkAGpFo9TMWoq3Zt6R0sjd7yMDYjADIzk/BlzBi61300e8EZ5WH0JKkxFtgp48PafGc5HD4JYYaVpagEuxjq4f6RlLKgESi/9TpmfA6HyurDvsCDjAZd0jFd5ppwRWu6vv727pnwG1BO+OnL+NYMpBLMhrjhON2SlKuN+mPXi08PEpWxooZrngfzEE6wfsrgfdNZfLl3axJywhpnwReQE0gjuXJW8N6l7f6PvnY6BzScxzVnQL8+yFE22bKNVQB1GjcefHUA68uLWL2VrNpMqEzCkmAkR0pAwipP9vfQdjbMNWcmaY65YtAHO4F+WZ7CiGtfVvYBJ67Px1g594Kt7fFYJg3HOwIauJCL3rpLqx83/vF/qLb7O6QF2e5IT9d+Akb68RwAWZn8AAAAAElFTkSuQmCC",
@@ -732,6 +783,7 @@ ICON_DATA = {
         "rot_l": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADaElEQVR42oVUXWibVRh+3nO+L02bdM2yVE2WnxaHF63oRb0SpcWJeKMg2CKCFzJB3NVgCtoNvlTWxql0FwMvVBS8rAhD1BsvuiFYkQUntJMhYzHtki0paZOmyZfv57xeNFmTZekeOBeHc97nfXjeH0I7DBaYIxVL5S6C7V/XZxM/jhmrnv6IyUgD6fAOIznlgojRA9R5ZRoz1vRqf2CNvIGEa26/u/Fh9NuuqCWWmIECuom1fS4WIFLmQCEB4jBbVU3q3m/iqY2nQKIEKUjK/r9MVV3Jz9BmM4buV3uPcDIJcQVQNjde0I9Efc5WAco2LT109BTc5icB6BWnEv+88FV1Z/vjElGlZVMX4SPXwTAMARZhtpyLzM5PQz5RapTzUx6d0rCVx1LqWcXiTTkcOe1nPO9P/fdy9iPaalfa5SEMUHvGByF2/s6s5js879bLf/QreulGLbSLJBhErN1XI8YceHKZtdOD8EzEt94B6cOWWWMA7D90SDZqtb+j4SMLowsbpD929FztTtbAHL2PcZbAPXPaNDJLAMjmCpP8AOTublq/r2aDAIuR8/l/Ep8Vd8LG7VCrSKJnPxHJhuW4ACwADgAbgCOFqOTLugaQYna+k0MhvxzAcwCA5GUpDrCKQSSbhWs/ItinFABIoj+hwIL5aQCYyA+2K2SCwdqXaRyUpBOSGgATY59HdBaEnPeeIRvMtGcnu02jO05dEIGZlKJxEgQGZwAgHZ5gba+HgHgqG4DuW9Cd3X9vEi1WbhUGoh5NApDtopTioN8PgIjVQvYN7FZcyXK59dzWNkOAWz+hvEPOyJm1H8ZG6LfbxcolXSLg2A0GBHv7fZppq2tTT0SKiXO3XpOh2JS9mb20PpvIYJol5sjdH3YAsdTGK6NfWBxfLK14z+QSvayLzGeOjyyWtxIXtouxT+8+DmaCwaJzUpZYYobc+HzmhDwc+5prJVPA/kRj55egwE1T0+SO6T6pgLfgf/RtZVYrql46vn722NX2eabutURufD7zOvUNXpCDwShbDbjVTReAkIEIAQy3Vl5x6uWTubOj11oxPfYhgOklie9n3GFj1T/gC73KQn8Ryj4GZobWdxXK/Tn7wfAyAG79fXh/NT09EE3PHrKxO4aakLy8R3y9yAAwOTZNV8bBvbY1APwPdUivS3Yde2QAAAAASUVORK5CYII=",
         "rot_r": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADd0lEQVR42o1UTWhcVRT+zr3vTd68TGaSZyZ22mSS4EJoCq1MkRYKsYIblSJCgiuhoAsX4g+CxgRnBmpaSQXdKIo/oBuZCAVXIorJwi6E4KamYCNmfjJjM9NmMsl0kjfv3uPiTWoTJ6kHLnfxnfvxne+ecwgHBTMhNScTpS5CAmgULVpMH3MHprPnQOYT+YnDLyPJAmnSO09oHyZCBgLjpPYi/ZcK56XV/QlvVbOhRnVkMT3SBIh3cKOtKiLGOFTs8kqvJUKnlWo8AqUZrB0yrVfZ3WQIM7Zl9w0CdAPMAuSr3E2Y9AEn+Uc41NX9DiBfpFA4bOiwj0ugeWvFJWkGjJ6+zmal8DiAG6MpiHlgD6GvTMcvZntgBL83neijqlxcktXCBwEhrsIUrtvkhN0p5tYbnsOu9zRYxJBMir5F8G4PmQkp0MN2pbMh+AcZjJzy6muT+TcPTR/4aUkWSIP/6+EsBNKk7kxnk4Fo/JT+e2Uq/3b/dKF0a6zDto9v1moKAAUsm8DN8kKu57P3N+DOnyWvfWsAiCVXegdnyhtD75WuAyyuXss5xZsVl9tErrg66j9luZdOIDUnAUDaOCMjvSFm7yuAdGndNKQQNQAegGbrdrddTxGR3M8FkSh1EQAI5uPQYEn0KwA4HVoDEC1b/j0+Ge9LeLdykACYIGkb/zM+XYBAkg2A7w6IsRBLsE/IyyQIStMImH9p/FYiAKp1uNURmpnZT2d6iajZTqEGAMnyZ1WvKe15z4GIQyFAa3b8dobRuk0rYMjaFtsg4uFL2dfjlysfxy9mewAmMJMvdYwlZkkNTGevmL3xZ9Tq8rP5qeErfxbKH4a7Qie2GnUP0GSYHdRUqB6Jus8PT606FD1yXW03DOjgg7mJSBW804dH/RIws/qGqq+fIdv54tC7y7Xh/ugr7byzJouDfQ/EvpEBO8iNzXP5ie41ZFiCSNHuric9cGHppAg6PwkrFMbmzS8F8HWXJa9ZnqduazzkkfGkhvkW2Y6l1vIv5CaHPkeG5c5m2r2+WsDhC3+dMIKRj6QdOQ0QVLXIALQM9UoKdEBt3C7w9sZrucmhb+8la78PxzISs+MKAMVnymch5FPwtk+CiCDMJdLNH+/UK9+V08c278m9TyRZ3Dcnw22nhQ7Y/4QMxOjvoPnFWX8yjkb9/NRjCkRtp+UfE1KYZMudYDcAAAAASUVORK5CYII=",
         "rot_many": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADFElEQVR42rVUPWxbVRg95773/BPbtRtkLBXFSlIpQytgCBNSpYC6IaEyUCYGhFDZEEIQIYpM1aEChhQJhkjAwIJU2MoeMaRUSi0xIZEEQh2wn+3n3/di5/n53a9D45BYNQpDz3jv930657vnXOCkECEKYh47K6yZKIjC/8ZY07lbklxcFetR9zxOQjg+6xOA10g99+EfufB0cpnAa1DGGZHQBa3beq918+/C2Q3cEgOXGfIkBHPXd5fiicRtmvHkcK/xo4jeVOQ0jOgbaiod1e3qW6Wr+a8XV+9Z4wwVgOmy64KeR6efUk/PJ/WzN0uvO2H6pVjovv3n8szWqD5/4/5pRlOfq9ipNwdu5cV/lmfWOJK5u7sbi0QTP8Wn4vO9fi8kYAEKhmkgGTXaMeVcMuOzO9/fKcW/8meCnzeLxJXnAgDIf2b/TmVmJfCLJgCQlEqlkhLivNfdWyKDxr7vu3Nzc/sAYDutXxvDzNkQ2Ln8fL4/Yri4KlbxCgOGg09VMvuN+N5F84hcIcRLJKxqJpNt2Xb9krfnX3A9VyTUWUV5p9XxXg6GwV/Z6cyXBILiD9AoiBJ9/64OeiUZeGvH7EDA6Ha7rNfrKaH6zg/8aVKiJEwFpfyBD0V1vVxrLIEUefVhX+mj2d+Mfu1CZMj3D61SLpezds3ZaTab6Wazma7UnO2Rrey6s16pt14AgIrtrNtO65UDVcaBvsPHnehyAobjOGdExIQwoognRMQkGYOIHqsWiBAiHB8o6gAAoLXWAPRDMhiSHAKQRzOggDwSGZIAjJWVlU46ne4IoLPZoENSA9Ai2jpJCNQocq7r7kMg7773wUa13rxL8KlqPXan1mhtWJb1jBJW/t3ZZJgkRUS4sLDQrVbbF2PxqXO9fi+tqG5IqD9OJlMdz2vbudyTmwBQqTl9YnJiD40NALlcZhvAtsg9y67PfmFGo6rdbkNFInnbcc6HQ9GWac0Pw/C/Bx7NcrFYNLa2TqlUGt9GI9bVMAhEwqEiOYxFLAL4JRyY6wctGo8bnPxBizHBIgSgR2t67HgAbjCNk/XvqW8AAAAASUVORK5CYII=",
+        "rot_all": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAD2klEQVR42nVUS2xbVRA9M+/ZL44T1+TXKE0cklZAWRQo3VQtJSkLNrQb5LDtAoFYVUL8iqicVE2TNjSoXRRYoSwQkrtCCmUF/UBhVQUW0AjR5uN8HDt2nI/97PfevcMiuPk4OZu7mLlHZ+bMDLATYsKICWMXRC7PHn76ev5R28DMZQB4NSZmOWZWZMfjBnpIAUD7lYVmYd8R8oovwKyCUvZjFl4B0dfEvE8gLwJCdwFd/k5bycRAD6mOS4+eMazaIWHjtBGqexJWChANaMcGRKDsXI5tp2OqryMHEQLRhtQyWfvAzBnHF7y2VlQhx3Xj9mzie6TkTyiRxoPGkYCJMARZmIE32Vd1WoiPAxjFTTAARVvILk6cUTVN3+z1F3H2Je/e6Wfx4x7LKCitTcMKePDVfEVETlnDvivJQ6byjKlzrWNlhesGQKj10vSB/deXC8He+fHfHiZvyA54mEh3AcC1W/9Y0bgYOxnG+BsEkLDgKgdCgfy8/dbRiDmuNKRYLBUzS8tebnnVXczm3MagNbyQyn57rGlF3+whFY2LgVischoO9M81tn+e9vYPJn4FgInZ9AURkUw25y6v5sW2S5Iv2FpEJJnKqGQy1ykiPhGhSoUASqY+aoQaDMOk7yBCojUDABHB8pkolkoo2EVazOY0EdxQOPggmcqMEJGIbJ1XEwAEOAQR+CzrLxCJJBaknKC1wFMa4VANeB0mgHBW68jOPdz0MoneFNNEJGWlzAzmJ2KECCUA6L0DxiaDTAAgwRSIxHF0GyDEnAIALrmetiy/AiocpfJSXOgmr0IhucY9ba+RXSy9AZBkV/jLtaJ3Uis1EaiyDK21bC9NCzFEqHMo0RUZTp98PiZ+QIgRjRvTnzVPqrWlMQ6Eo5GBqc6XDzbO1QZ8t5lpJF90fgFQYGYPgAvAA+AxkQaRKDFHSIyfnLrVPQCBEY0CREImf0g+y4BhjYgIGQQ0NzX03xp78LoWBP9vjw+ABcBsCXOq+tPJ876G5og4hfP/ng2lEbttbFm91v7pq/6mtvfVUuoHoPD29EcdSZOA9GLmXdOyGnTJdmv9Usp5gfp3RvPH72fD3X5n6ffJtfETQJdGL8qDKYQ4GD2kIoOJG2Zd63vecjoHpYc98UbnzrWOAQCem6nHqepjgaDzwVP1ja/4S5n72rVPTX8Sya1bRdsmPSaMPtJtg/M9bPq+MGrrW8R1gUIGRAAHwuDqKqhcFlo5fROj4xdxt9vbOAzb7yEAxGKMvj69d+iPYBVaTojgNWjvMNgAMT8Wre6IlH5OfNw+t17cBtnu2OWSVOZU7vJ/oMr9SMTF0XkAAAAASUVORK5CYII=",
         "t_edit": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACJUlEQVR42r2TvW/TQBjG3/fsFAExiZOqfCxIlWBtQYgBIUQQEwsDM6hL+QtgzsSAxNA/oSuGDkggVCGUIUwhfEViIAMQkrRN7NhOHNcOuH4YsFHUNFISIU46+Xx+7+e753mO6B83jgcAePj9wGLmkP5340KhIOdyuaBlGHfS6ext0+zsEVhmgiBigCk4llREz7E/nTy+cA8AMzPGAWVFUf4cE7Q0J9H1+WyWWBB53k+SJZkSCUESE/UcXhiSaSyQ4z+apnn6sKIuOpYVQNBSSkmu2V3nXRjs3VdUVbieY57IZCoz6aBv6RcAYEc3X067VsSDfD4vAMwBkCghJyPnEwCk6Cmm3hkAiYio3TavAMB2u/Mqmhdj6jnqf7/Ls8Zjn9sAIJg5FDPCBDPj24dC2h7gxfdW9xIzhwCEmBEW1ipFNXnm6maq9/GGKvvPti3vGhGNFRpEFEZ9FFZ8rh49e3lTbWxcdIsP/CNKap7DX4sjgY9N0XUrF8WmGINi4WuVimr4KAVfnsLduOXvug7qHW+ViEjTNGlEaCIiy7LSAHKtlrU87HKtZqtGH6Xw/RrcJzd913XRtILVqEae2E0A/MNGxuijFJYfwV9f9r1ODfUeJoNFEEnTNAmAqFarh7aM/pvw7UN46+d8z/g6OezAoDeb570A8D8/xmCngrqLu0RE5TISM92clmGt2M5u2x7gdcMKVqbe2X6TdN091Wh0s8PxGbfmN0qCdRE0aHR6AAAAAElFTkSuQmCC",
         "t_mark": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACfUlEQVR42s2Uv2sUQRTHv29n98zdJpdfRjgLyYGNRay01lJSCxbBn43YiH+BwcpSUEFjGsFGUggRglidgmBhZ2Onhzl292537za3ubu9ndl5FnfokaiJSsBXDcPM5735vu884H8IZqa1NRYHARb/VBUzGwDgB60Np+5fHO4bzEx/AzQBwK0HjzQzR+0OB81oeTThH8Nqbv1qXzG79SD1GqHqK+aGH72o1WqzwxeQuQ+YQUTKcfxTBbvwIG63MwBmlmVapikY+qgQIgFAAAaa/E43AKjVarO5sdwaGYadpikxM9u2bSRJ/3N3m86VSqUOACaiXwOHMEFE2srln9u2Xd6O44yIyDRN1syIO1tL5fJ0xMyCiHhfujmuf68vNbv1QHqNkL1GKJNU86bjXQeASqVi7qMJg0PVTed8J5Fc95vSa4TseL5KpGbH9VdGk46G+fMmGOprkxcmze0nSa+nsywTAHSxWBTtaOv9yuOHN4amzvaoDMTMxC9RaG1WPrb7zK7XUI7n6zCKddDc8lzXPTJq8p1BP2BnTLzKCxybYOl/WrUmrUutwk2VzC2ZQsdcLI5TK3QWSyvl19Ury7n56huFs6OotxkRdrs7Xi+fLMyNf9BKGyS7onf4gsbx2xx289fm5+jZXvoTAPCXy2PotG5BUF6r7BDSeJGTaCFLlLYsaajJ06FlpffBSgCad4oO2yIk6imdWK8OmmIEeZB5F1M5GH0NJDloI5cJqwfOz2QWRTOYyN8BBLBzwGgGihbQle8AVM2RTBJSW8gYGCMYhSkBmgZYAwxAMgYL7AZKDWBg7AEwLkigv4GesiG/CzG4T7TnZ4dpELQRHMg0/wZzLo40Ay8lVQAAAABJRU5ErkJggg==",
         "t_hide": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABjElEQVR42sVUsWoUURQ95963y4wJCRpEyy22E8FmO2Gn1DqlXbDRzlphpt8P0F6w2P2I/IZGZJmIRLtlwYzJ7LxjkSwYETITEjzwiseDc+89554HXDP45yXf3w/ZFUiyLGtICjcBSiJJTafTdHG8eu0W0lVzCtBajCf1k4TV8a93L/aefc7z3ML68ejopJdsWybELQkixMsIBUVEmamZAkBRFNfvx4UuRqPRTheGn+7aaBoOBoPFbDZrAJAAbDweW3n47T3JJ5IiAGvJGUlSUqlYPy3L8kcAEOfz+Tatt2tmva5zSoC7366b+ADA9wAAJEViKemOJP0txWVdSoKZ1wAQzqqIBFMAOj9dEAH0YkR/TWgkKwlf3O1hjN34SJikyqz+ujaFADQcDu+GkDw6V4ZtcwF3VnV1WB4cfOwoVcs9XEdvMplsbO7ce+Me0tXpCmatHFaSJFwsl29fvXz+6UL0+v377uaPnbal4K2cphDN3TZvpR9uInr/+A/z3NClSgEUxdkeX2Hd/hN+A/M5omSsJQvEAAAAAElFTkSuQmCC",
@@ -755,6 +807,8 @@ ICON_DATA = {
         "help": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADx0lEQVR42oWUTWhcVRTHf+fcNzPJTCZJbY01nbZUKeJH8atuhEqkInSjq4QWiqIu6kZBWqvExTiiDbZUC7qwLqSioE4VxEUVqQj1s9Rau9AKYjVJg630K85M5uO9e4+LmYbUpPiH9xb3Pn73vHv+/wMLqWhK0ZQryUwYLruFtqJ5K2VzjIgHKOw+u8yZ3WXBr0EVlWjc4nBkXOQE4Od+e0myEGzwhZM3RN35MSzcF2WyeY0iQAjBk8xUPOqOSByXxkcHP6NoSknCfGAHVhibeFTTPa9qlO6VZoVaM/GN2MyAdITkM86RzmFmWFzfM/HM4FMMlx37hwOIyVzY8h2nHnbZvn3WqkFIkmrL3I0DaVl/fYaejHLojwaHJ1ukHd6JoD1XO//P33snRguPt6EjXtolY6t2TK32qfQxwbo0tLjYFH1sbY5dG/ovu5V3j9XY9ulFuhxmSKLZRSlfPb9xcrTwAcUvI+UXBMS8yi5NZ7OEONRi1TsH0+za0M/ktOeJTy6w6f1zfDfRZPPtOTbflmO6iTgxZ62ZgMqem163HkpDXtkvfuXOM0sRWW+NijlwjThw73UZphuB7QcusvdwlQO/1nnkw/O0PGy8NYsTMEQtbph25ZfWan/dA2Jt2wR/t3Tnc1af9gni+rqEfT/WeO/4DNVWYNVVEfXYKPQ60g6mG4FgnY4KJhpZMO4HDkQAJtyiGhHABBCBemzUWkZK4exMoB4bfbXA0akWbx+tAdY2iSGERDC7edbYhsxLhQpECs0EHrojx7Jex2vfVnjwnbOoQD6jeJsTHkGBziswgYX2af9RIzG2rsuzbV2evowQrH3YHJChDjEmZyuMTA/FjWosItHlkYWuSHjlqwpLe5RGAk4WyDUGuINt4HDZ/d4cOLlCpo5rpmdtaFY9IrPBdwpv/VBFBDJO6E61q+zATF1KfL3SUKcH2788PAwlCWbynGGgarSThnWejzYv4acnr6XQ52gm7aa19y2R7n7FJzvHt19zum3sEfGUzU2OLvvcmpU9LrckQvBgwQxSCqsXp1jZ7+jtNELMzCzEUW5xylfPfT/w55kXKZry/JCX2asto4yIXzE29YbmFm2xZg180zc9Nph30t+t/Hwmtq4ITFzksv0kjco3po0HTm1dfqHtokvD4dLkKZpQklB4+fQmddGYRumV6iKarYQkGNlMhJkRWvWqEXZP/vbxS7y5JcZMELH58xCgWFRKpbD46RP57MCSISEMifk1Ig5DxwPydfD1L6aeXX5qtssd2JVVNsf/qWyuE6zL9C/CKdGyAmfarAAAAABJRU5ErkJggg==",
         "pdf": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABmUlEQVR42q2UzW7TQBSFvztjO6FOHNwuugUkJFiAoBW8Au/Eu/Ae9BlgBesIcJWWIFiYkrb+mbks6oIdrMRFPdLVyNeez+eesQz/KVU1ff2gfXF6qrEdnR24orB1P0TTNDWL5eKziHxSVSsiru/BAGDx9ftrVdWLy1KLyv1Tl2WtXlXzs9WP+Tx72d7b67B2bgz48Sis1++15JPJzq6qvp1nJ69E5F3baScHA77pbaoAcLNpnO7dTY6y7OSFiLjrTM3AE+iuYAE/m8bpJJkeHR9/e9hEbIYBRbrrn4FwSTJJK60eiIgCEmw0VhSgilYlcmcHigKJ486rqqpWEVP2Hkord8BQfvxAnX0huHcft1xi9/cZHRxejd64FRERkLbtHl21JYoIHz1GALEGu7u3NZ2NI0dPnoIIPs+Jnj2H68i7WQ4HIgKqmNns7ylvgA37bBroNmfDgQNBNwPeQLcODNZ/T0Dd1BB5wChoL9AYM256wVBHo9ASmTBYBzqA0EZv8tXFz/Nf59Z7L9vMRdEYYySv69X7luPb1W+5NbnD5IzrbwAAAABJRU5ErkJggg==",
         "plus": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABaUlEQVR42s1Vy07CUBScaW9ZSBMsLvgPNfyDH6M7f8Of4CP8CuNjwc4toZAUDBBE773jgpa0DQZQYpxkMunJybnTc+5pgT0giZKIf4s0TWNJiSSzKzfY8aoBAHiaHoDX0Sjr5vHwRwULEGgBSEhGv3K4cQrYtUBHKbg2ib2mHNR7ViaAQgkAJCvxErm1IElfoyXpAdk8Y5HHP2t5m1ZQEkkqTdPY0/SMMbG3Vh4gBIIQofNGo9FerT4eQE5yx4KgZtzkcr687XSSJ0kBCrv9fv8se5tLkryqyKYzDYZjrWw17nIdDEZXxXViqX9mlGXdiJF5txYGgKMLQoXeyd+1k9bFdDK7IfHsnAvDMHQWFnF8CrdavCRJMt17PYfj7F6SxoPx5aFTDmuMCgUARCbOnxu1vG+n7MoEUKjyA305XqIOvdg+53E2heQJgIDkzq+N2b3GAD2vAbSNwWPJ8d+Ae/4Cin2urNk2fAHmbSAciMvc8AAAAABJRU5ErkJggg==",
+        "tab_x": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABRElEQVR42s2Sv0rDYBTFz20qiIFWi6n0CRxFzOIiFOe6O1WQivgSfQfRTRB0ywOUgiZp/jSh4RMcOujirIKo1NYG2l4HLcSQInUQ73i+e+4998cH/MtiZkrQUkn6xKpWq6moeaoE9Xo9Nzaappn+1PQV3Q2W4wmjW4iZqWbbylxm8daw/QMiGhWLxUHtorG6oCjXGA634z6K3wmATLe1n1fyR48P9zvh4F3k5pV2PwxPN9bVXQBERKMfARqWV7aaQcfxr14dXxxGuHxbmgSHAKDXeQuYOS3Lcibs9wMAKJVKEgCONqfj5IloZBjOmpzNil63e/z88tRaKhTOLy1vVlXVE2ZOJZ4QhWh7out44mz8ptt+pX1zx4bT3AMATdOkiQw0TZOMZmtzPFQIMQMAuulW9Ia/9at/MbXhKyLFtakH/Ul9AHSIrU/XRy5wAAAAAElFTkSuQmCC",
+        "tab_x_hot": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAACzElEQVR42nWTTWxUdRTFf/f//79XOv2aMgikJn7EHRJtCTZFFoSVaxePvamJwZ0JhpiYvA6GLQtDTIxCDPIRmLAhYtGwaKJUArJpS01cmHTEIInTdL5n3rz3vy6mSMFwVveem3s25xx4BhpFlufgShRZBdnKPbXEYIrgHx3aM+zT0cNCNukwZPhyN7M3X7p9+y8ABRHQpwQ0iqyUStnfb7/1fmhM0SIToQgIZKp0lUaCP3OtnX38wb17vcciAqBxbKRY9H/O7P9iexgcbXQSetZkqCoA1oppt20+CKg5e0vrnXd2Ly21AIxGkZVi0Zdnpme3h8HRjU43zfJ5T5JYMcZJEDitVq19fa9WX3m1l/f+YDq07TRAKYqMnVtd5cNDe4bx4XyW9gY0n5ddl68akoTuL4tor0f4xpvs/PaiaK1m1xcW0vGRkX2ViV3XZ364+cAJ6MNu7vCwM/m6WE+lYutff8nYseNou0WyssLO85doXf+O2unPkdFRxHtVlSPAXQeghn2hESFVlYEB6mfPoO02Y8eOgyrN0mU2Tn6GDA6iIJmqYHQKwACIyhM7jUGcI7l/vz/nciS/raKdDgQBqPb9o//jNk1cy1TBGNFmk3ByihfOXaB5tUSyvMz43AkkCGmc+wZTKKgTPKrl/wTEd76vZ0OJTVOnhYLu+OqstG/Ms3EiRpMEGQjJf/IpIkLt4nlsoWAkSa8AWI0iO/LjQv2jFyd2jIfhgVaSpL2VZdu4dAFxDhkbo7u4iG80SNfX06HymqsauZOpnTs1O+tFQYgRVpGHD6Z/Kjh74FG1mplcThERVBFrNavVGA1Dlw4OVpqk0y///OsfGsdGHmebOJbK/PywOj21zQWzRpVsM4hGwFpHI00Xa93We6/dXfpd+7R/0oUtBfnn4PRM6vVdhSkLKkgZY66tdXo39vd7YAT8/+qqILpp7fPw7P1fjOxQoW5mTJ4AAAAASUVORK5CYII=",
     },
 }
 
@@ -977,7 +1031,12 @@ class SearchPanel(ttk.Frame):
         self.query = tk.StringVar()
         self.sub = tk.BooleanVar(value=pr.get("search_sub", True))
         self.body = tk.BooleanVar(value=pr.get("search_body", False))
-        self.info = tk.StringVar(value="폴더와 검색어를 넣고 Enter")
+        self.info = tk.StringVar(value="검색어를 넣고 Enter (다시 Enter·F3 = 다음)")
+        self.scope = tk.StringVar(value="file")      # 기본: 지금 보는 파일에서 찾기
+        self.hits = []          # 현재 파일 결과 [(path, page, rect, snippet)]
+        self.hit_idx = -1
+        self._last_q = None
+        self._last_path = None
         self.running = False
         self.q = None
         self.map = {}
@@ -985,7 +1044,15 @@ class SearchPanel(ttk.Frame):
         self.results = []      # [(path, [(page, snippet)])]
         self.words = []
 
-        r1 = ttk.Frame(self)
+        r0 = ttk.Frame(self)
+        r0.pack(fill="x", pady=(0, 3))
+        ttk.Radiobutton(r0, text="이 파일에서", value="file", variable=self.scope, style="Toolbutton",
+                        command=self.on_scope).pack(side="left", expand=True, fill="x")
+        ttk.Radiobutton(r0, text="폴더에서 PDF 찾기", value="folder", variable=self.scope, style="Toolbutton",
+                        command=self.on_scope).pack(side="left", expand=True, fill="x")
+        self.r0 = r0
+        self.folder_box = ttk.Frame(self)
+        r1 = ttk.Frame(self.folder_box)
         r1.pack(fill="x")
         ttk.Entry(r1, textvariable=self.folder).pack(side="left", fill="x", expand=True)
         ttk.Button(r1, text="…", width=3, command=self.pick_folder).pack(side="left", padx=(2, 0))
@@ -993,12 +1060,16 @@ class SearchPanel(ttk.Frame):
         r2.pack(fill="x", pady=3)
         qe = ttk.Entry(r2, textvariable=self.query)
         qe.pack(side="left", fill="x", expand=True)
-        qe.bind("<Return>", lambda e: self.start())
+        qe.bind("<Return>", lambda e: self.toggle() if not self.running else None)
         self.qe = qe
-        self.btn = ttk.Button(r2, text="검색", width=5, command=self.toggle)
+        self.btn = ttk.Button(r2, text="찾기", width=5, command=self.toggle)
         self.btn.pack(side="left", padx=(2, 0))
-        r3 = ttk.Frame(self)
-        r3.pack(fill="x")
+        self.r2 = r2
+        self.nav = ttk.Frame(self)
+        ttk.Button(self.nav, text="▲ 이전", command=lambda: self.step(-1)).pack(side="left", expand=True, fill="x")
+        ttk.Button(self.nav, text="▼ 다음 (F3)", command=lambda: self.step(1)).pack(side="left", expand=True, fill="x")
+        r3 = ttk.Frame(self.folder_box)
+        r3.pack(fill="x", pady=(3, 0))
         ttk.Checkbutton(r3, text="하위 폴더", variable=self.sub).pack(side="left")
         ttk.Checkbutton(r3, text="PDF 본문도", variable=self.body).pack(side="left", padx=6)
         b = ttk.Button(r3, text="현재 폴더", command=self.use_current)
@@ -1029,6 +1100,103 @@ class SearchPanel(ttk.Frame):
         self.menu.add_command(label="새 창으로 열기", command=self.open_window)
         self.menu.add_command(label="즐겨찾기에 추가", command=self.add_fav)
         self.menu.add_command(label="파일 위치 열기", command=lambda: self.sel() and open_folder(self.sel()[0]))
+        self.on_scope()
+
+    def on_scope(self):
+        """이 파일에서 / 폴더에서 바꾸기"""
+        self.running = False
+        if self.scope.get() == "folder":
+            self.nav.pack_forget()
+            self.folder_box.pack(fill="x", after=self.r0)
+            self.info.set("폴더와 검색어를 넣고 Enter")
+        else:
+            self.folder_box.pack_forget()
+            self.nav.pack(fill="x", after=self.r2)
+            self.info.set("검색어를 넣고 Enter (다시 Enter·F3 = 다음)")
+        self.clear()
+
+    # ---------- 이 파일에서 찾기 ----------
+    def start_file(self):
+        q = self.query.get().strip()
+        if not q or not self.app.doc:
+            if not self.app.doc:
+                self.info.set("먼저 PDF를 열어주세요.")
+            return
+        if q == self._last_q and self.hits and self._last_path == self.app.path:
+            self.step(1)          # 같은 검색어로 다시 Enter → 다음
+            return
+        self.clear()
+        self._last_q, self._last_path = q, self.app.path
+        self.running = True
+        self.btn.config(text="중지")
+        self._fp = 0
+        self.after(10, self.poll_file)
+
+    def poll_file(self):
+        app, q = self.app, self._last_q
+        doc = app.doc
+        if not self.running or doc is None or app.path != self._last_path:
+            self.finish_file("중지했습니다")
+            return
+        t0 = time.time()
+        while self._fp < len(doc) and time.time() - t0 < 0.05:
+            p = self._fp
+            self._fp += 1
+            page = doc[p]
+            with unrotated(page):
+                rects = page.search_for(q)
+                pw = page.rect.width
+                for r in rects:
+                    line = page.get_textbox(fitz.Rect(0, r.y0 - 1, pw, r.y1 + 1)) or q
+                    snip = " ".join(line.split())[:60]
+                    self.add_hit(app.path, p, fitz.Rect(r), snip)
+        if self._fp < len(doc):
+            self.info.set(f"찾는 중… {self._fp}/{len(doc)}쪽 · {len(self.hits)}곳")
+            self.after(5, self.poll_file)
+            return
+        self.finish_file("")
+
+    def add_hit(self, path, p, rect, snip):
+        if len(self.hits) >= SEARCH_MAX:
+            return
+        if not self.results or self.results[-1][0] != path:
+            self.results.append((path, []))
+        if not self.results[-1][1] or self.results[-1][1][-1][0] != p:
+            self.results[-1][1].append((p, snip))
+        self.hits.append((path, p, rect, snip))
+        iid = self.tv.insert("", "end", text=f"{p + 1}쪽:  {snip}", tags=("hit",))
+        self.map[iid] = (path, p, len(self.hits) - 1)
+
+    def finish_file(self, msg):
+        self.running = False
+        self.btn.config(text="찾기")
+        n_pages = len({h[1] for h in self.hits})
+        if self.hits:
+            self.info.set(msg or f"{n_pages}쪽에서 {len(self.hits)}곳 찾음")
+            if self.hit_idx < 0:
+                self.step(1)
+        else:
+            self.info.set(msg or "찾는 글자가 없습니다.")
+
+    def step(self, d):
+        """다음/이전 찾은 곳으로"""
+        if not self.hits:
+            if self.scope.get() == "file" and self.query.get().strip():
+                self.start_file()
+            return
+        self.hit_idx = (self.hit_idx + d) % len(self.hits)
+        self.go_hit(self.hit_idx)
+
+    def go_hit(self, i):
+        path, p, rect, snip = self.hits[i]
+        if self.app.path != path and not self.app.open_path(path):
+            return
+        self.app.show_hit(p, rect, self._last_q or "")
+        iid = next((k for k, v in self.map.items() if len(v) == 3 and v[2] == i), None)
+        if iid:
+            self.tv.selection_set(iid)
+            self.tv.see(iid)
+        self.info.set(f"{i + 1} / {len(self.hits)}  ·  {p + 1}쪽")
 
     def pick_folder(self):
         d = filedialog.askdirectory(initialdir=self.folder.get() if os.path.isdir(self.folder.get()) else None)
@@ -1042,6 +1210,8 @@ class SearchPanel(ttk.Frame):
     def toggle(self):
         if self.running:
             self.running = False
+        elif self.scope.get() == "file":
+            self.start_file()
         else:
             self.start()
 
@@ -1051,7 +1221,9 @@ class SearchPanel(ttk.Frame):
         self.map.clear()
         self.dir_nodes.clear()
         self.results = []
-        self.info.set("")
+        self.hits = []
+        self.hit_idx = -1
+        self._last_q = None
 
     def start(self):
         folder = self.folder.get().strip()
@@ -1137,7 +1309,7 @@ class SearchPanel(ttk.Frame):
 
     def finish(self, msg):
         self.running = False
-        self.btn.config(text="검색")
+        self.btn.config(text="찾기")
         self.info.set(f"{msg} · {self.scanned}개 중 {len(self.results)}개")
 
     def add(self, path, hits):
@@ -1158,12 +1330,17 @@ class SearchPanel(ttk.Frame):
 
     def sel(self):
         s = self.tv.selection()
-        return self.map.get(s[0]) if s else None
+        v = self.map.get(s[0]) if s else None
+        return v
 
     def activate(self, e=None):
         v = self.sel()
         if not v:
             return
+        if len(v) == 3:                 # 이 파일에서 찾은 곳
+            self.hit_idx = v[2]
+            self.go_hit(v[2])
+            return "break"
         path, pg = v
         if os.path.isdir(path):
             return
@@ -1337,8 +1514,10 @@ class App:
         em = tk.Menu(mb, tearoff=0)
         em.add_command(label="되돌리기", accelerator="Ctrl+Z", command=self.do_undo,
                        image=self.menu_icon("undo"), compound="left")
-        em.add_command(label="찾아 바꾸기...", accelerator="Ctrl+F", command=self.find_replace,
+        em.add_command(label="이 파일에서 찾기", accelerator="Ctrl+F", command=lambda: self.focus_search("file"),
                        image=self.menu_icon("find"), compound="left")
+        em.add_command(label="다음 찾기", accelerator="F3", command=lambda: self.search_panel.step(1))
+        em.add_command(label="찾아 바꾸기...", accelerator="Ctrl+H", command=self.find_replace)
         em.add_separator()
         em.add_command(label="글자 수정 단위", state="disabled")
         em.add_radiobutton(label="    줄 단위", value="line", variable=self.unit, command=self.reload_items)
@@ -1425,6 +1604,10 @@ class App:
                        image=self.menu_icon("rot_l"), compound="left")
         pm.add_command(label="여러 쪽 회전...", command=self.rotate_dialog, image=self.menu_icon("rot_many"),
                        compound="left")
+        pm.add_command(label="전체 쪽 오른쪽으로 회전", command=lambda: self.rotate_all(90),
+                       image=self.menu_icon("rot_all"), compound="left")
+        pm.add_command(label="전체 쪽 왼쪽으로 회전", command=lambda: self.rotate_all(-90))
+        pm.add_command(label="전체 쪽 180° 회전", command=lambda: self.rotate_all(180))
         pm.add_separator()
         pm.add_command(label="원하는 쪽만 저장...", accelerator="Ctrl+E", command=self.extract_dialog)
         mb.add_cascade(label="페이지", menu=pm)
@@ -1438,7 +1621,7 @@ class App:
         bm.add_command(label="즐겨찾기 보기", command=lambda: self.show_side(self.fav_panel))
         bm.add_command(label="북마크 보기", command=lambda: self.show_side(self.bm_panel))
         bm.add_command(label="최근 본 파일 보기", command=lambda: self.show_side(self.recent_panel))
-        bm.add_command(label="파일 검색", accelerator="Ctrl+Shift+F", command=self.focus_search)
+        bm.add_command(label="폴더에서 PDF 찾기", accelerator="Ctrl+Shift+F", command=lambda: self.focus_search("folder"))
         mb.add_cascade(label="즐겨찾기", menu=bm)
 
         sm = tk.Menu(mb, tearoff=0)
@@ -1508,7 +1691,8 @@ class App:
         sep()
         btn("rot_l", lambda: self.rotate_pages([self.page_no], -90), "이 쪽 왼쪽으로 회전 (Ctrl+L)")
         btn("rot_r", lambda: self.rotate_pages([self.page_no], 90), "이 쪽 오른쪽으로 회전 (Ctrl+R)")
-        btn("rot_many", self.rotate_dialog, "여러 쪽 한꺼번에 회전")
+        btn("rot_many", self.rotate_dialog, "여러 쪽 골라서 회전")
+        btn("rot_all", lambda: self.rotate_all(90), "전체 쪽 오른쪽으로 회전 (메뉴 [페이지]에 왼쪽 회전)")
 
         # 도구 버튼 (뷰어·편집 모드 모두 표시) + 도구별 옵션(편집 모드)
         self.toolarea = ttk.Frame(self.topbox)
@@ -1631,7 +1815,12 @@ class App:
         self.pw.add(wrap, weight=1)
         if not self.panel_on.get():
             self.pw.forget(self.side_box)
-        self.tabbar = ttk.Notebook(wrap)
+        self._close_themes = set()
+        self.ensure_tab_close(ttk.Style(self.root))
+        self.tabbar = ttk.Notebook(wrap, style="Closable.TNotebook")
+        self._pressed_tab = None
+        self.tabbar.bind("<ButtonPress-1>", self.on_tab_press, add="+")
+        self.tabbar.bind("<ButtonRelease-1>", self.on_tab_release, add="+")
         self.tabbar.pack(side="top", fill="x")
         self.tabbar.bind("<<NotebookTabChanged>>", self.on_tab_changed)
         self.tabbar.bind("<Button-2>", self.on_tab_middle)
@@ -1684,14 +1873,17 @@ class App:
         r.bind("<Control-w>", lambda e: self.close_tab(self.tab))
         r.bind("<Control-Tab>", lambda e: self.next_tab(1))
         r.bind("<Control-Shift-Tab>", lambda e: self.next_tab(-1))
-        r.bind("<Control-F>", lambda e: self.focus_search())
+        r.bind("<Control-F>", lambda e: self.focus_search("folder"))
+        r.bind("<Control-h>", lambda e: self.find_replace())
+        r.bind("<F3>", lambda e: self.search_panel.step(1))
+        r.bind("<Shift-F3>", lambda e: self.search_panel.step(-1))
         r.bind("<Control-C>", lambda e: self.pick_tool("edit" if self.mode.get() == "capture" else "capture"))
         r.bind("<Control-g>", lambda e: self.focus_page())
         r.bind("<F4>", lambda e: (self.app_mode.set("edit" if self.app_mode.get() == "view" else "view"),
                                   self.set_app_mode()))
         r.bind("<Control-s>", lambda e: self.save())
         r.bind("<Control-z>", lambda e: self.do_undo())
-        r.bind("<Control-f>", lambda e: self.find_replace())
+        r.bind("<Control-f>", lambda e: self.focus_search("file"))
         def nav(f):   # 글자 입력칸에서는 Home/End/PgUp/PgDn을 쪽 이동에 쓰지 않음
             return lambda e: None if isinstance(e.widget, (tk.Entry, ttk.Entry, tk.Text, tk.Spinbox)) else f()
         r.bind("<Prior>", nav(lambda: self.go(-1)))
@@ -1850,7 +2042,7 @@ class App:
             self.ad_frame.config(height=1, highlightthickness=0)   # 빈 광고창은 최소화
 
     def show_about(self):
-        dlg = tk.Toplevel(self.root)
+        dlg = Popup(self.root)
         dlg.title("정보")
         dlg.transient(self.root)
         dlg.resizable(False, False)
@@ -1885,7 +2077,7 @@ class App:
         if getattr(self, "_help", None) and self._help.winfo_exists():
             self._help.lift()
             return
-        dlg = self._help = tk.Toplevel(self.root)
+        dlg = self._help = Popup(self.root)
         dlg.title(f"{APP} 사용방법")
         dlg.transient(self.root)
         dlg.geometry("600x620")
@@ -2043,12 +2235,26 @@ class App:
         r.after(300, lambda: r.attributes("-topmost", False))
         r.focus_force()
 
-    def focus_search(self):
+    def focus_search(self, scope="file"):
         if not self.panel_on.get():
             self.panel_on.set(True)
             self.apply_panel()
         self.side.select(self.search_panel)
-        self.search_panel.qe.focus_set()
+        sp = self.search_panel
+        sp.scope.set(scope)
+        sp.on_scope()
+        if scope == "file" and self.sel and self.sel["text"].strip() and len(self.sel["text"]) < 60:
+            sp.query.set(" ".join(self.sel["text"].split()))   # 선택한 글자로 바로 찾기
+        sp.qe.focus_set()
+        sp.qe.select_range(0, "end")
+
+    def show_hit(self, p, rect, text=""):
+        """찾은 곳으로 이동하고 파랗게 표시"""
+        h = self.doc[p].mediabox.height or 1
+        frac = max(0.0, min(1.0, rect.y0 / h))
+        self.goto(p, frac)
+        self.sel = {"page": p, "text": text, "rects": [fitz.Rect(rect)], "y": frac}
+        self.draw_selection()
 
     def save(self):
         if not self.doc:
@@ -2179,7 +2385,7 @@ class App:
         return True
 
     def settings_dialog(self):
-        dlg = tk.Toplevel(self.root)
+        dlg = Popup(self.root)
         dlg.title("환경설정")
         dlg.transient(self.root)
         dlg.resizable(False, False)
@@ -2451,6 +2657,7 @@ class App:
                "field": pr_.get("field") or "#ffffff"}
         if not top["bg"]:      # 기본(회색): Windows 기본 모양 그대로
             st.theme_use(self._native_theme)
+            self.ensure_tab_close(st)
             fg_ = top["fg"] or "black"
             st.configure(".", font=(fam, size), foreground=fg_)
             st.configure("Treeview", rowheight=int(size * 2.3) + 2, foreground=fg_)
@@ -2458,6 +2665,7 @@ class App:
             self._top_dark = self._base_dark = False
         else:
             st.theme_use("clam")
+            self.ensure_tab_close(st)
             top["fg"] = top["fg"] or "#1f1f1f"
             top["accent"] = top["accent"] or "#cfe3fa"
             base = dict(top) if pr_.get("scope") == "all" else dict(NEUTRAL)   # 기본 색은 도구줄에만
@@ -2480,6 +2688,7 @@ class App:
         except (AttributeError, tk.TclError):
             pass
         self.refresh_icons()
+        self.ensure_tab_close(st, force_layout=True)
         self.cv.configure(bg=self.tcolor("canvas") or "#5a5a5a")
         self.root.after(50, self.fit_toolbar)     # 글꼴 크기가 바뀌면 도구줄 다시 맞춤
         if hasattr(self, "theme_var"):
@@ -2489,6 +2698,62 @@ class App:
             self.render()
         else:
             self.place_wall()
+
+    # ---------- 탭 닫기(×) 버튼 ----------
+    def ensure_tab_close(self, st, force_layout=False):
+        """탭 이름 오른쪽에 × 그림을 넣은 탭 모양 (ttk 테마마다 한 번 만듦)"""
+        theme = st.theme_use()
+        if theme not in self._close_themes:
+            for var in ("light", "dark"):
+                n, h = (self._icon_var_img(var, "tab_x"), self._icon_var_img(var, "tab_x_hot"))
+                try:
+                    st.element_create(f"tabclose_{var}", "image", n, ("active", "pressed", "!disabled", h),
+                                      ("active", "!disabled", h), border=4, sticky="")
+                except tk.TclError:
+                    pass
+            self._close_themes.add(theme)
+            force_layout = True
+        if force_layout:
+            var = "dark" if getattr(self, "_base_dark", False) else "light"
+            st.layout("Closable.TNotebook", [("Notebook.client", {"sticky": "nswe"})])
+            st.layout("Closable.TNotebook.Tab", [
+                ("Notebook.tab", {"sticky": "nswe", "children": [
+                    ("Notebook.padding", {"side": "top", "sticky": "nswe", "children": [
+                        ("Notebook.focus", {"side": "top", "sticky": "nswe", "children": [
+                            ("Notebook.label", {"side": "left", "sticky": ""}),
+                            (f"tabclose_{var}", {"side": "left", "sticky": ""}),
+                        ]})]})]})])
+            if hasattr(self, "tabbar"):
+                self.tabbar.configure(style="Closable.TNotebook")
+
+    def _icon_var_img(self, var, name):
+        key = (var, name)
+        if key not in self._icons:
+            self._icons[key] = tk.PhotoImage(data=ICON_DATA[var][name])
+        return self._icons[key]
+
+    def on_tab_press(self, e):
+        try:
+            elem = self.tabbar.identify(e.x, e.y)
+        except tk.TclError:
+            return
+        if "tabclose" in elem:
+            self._pressed_tab = self.tabbar.index(f"@{e.x},{e.y}")
+            self.tabbar.state(["pressed"])
+            return "break"           # 탭이 바뀌지 않게
+
+    def on_tab_release(self, e):
+        if self._pressed_tab is None:
+            return
+        idx, self._pressed_tab = self._pressed_tab, None
+        self.tabbar.state(["!pressed"])
+        try:
+            elem = self.tabbar.identify(e.x, e.y)
+            same = self.tabbar.index(f"@{e.x},{e.y}") == idx
+        except tk.TclError:
+            return
+        if "tabclose" in elem and same and idx < len(self.tabs):
+            self.close_tab(self.tabs[idx])
 
     # ---------- 아이콘 ----------
     def icon(self, name, area="top"):
@@ -2654,14 +2919,15 @@ class App:
         if not self.ensure_room("bookmarks"):
             return None
         page, pos = self.page_no, None
-        if self.sel and self.sel["text"].strip():   # 선택한 글자가 있으면 그 글자를 이름으로, 그 위치로
-            default = " ".join(self.sel["text"].split())[:60]
+        if self.sel and self.sel["text"].strip():   # 선택한 글자가 있으면 묻지 않고 바로 그 글자로 추가
+            name = " ".join(self.sel["text"].split())[:60]
             page, pos = self.sel["page"], round(self.sel["y"], 4)
+            self.status.set(f"북마크에 추가했습니다: {name}  ({page + 1}쪽)")
         else:
             default = f"{os.path.splitext(os.path.basename(self.path))[0]} - {self.page_no + 1}쪽"
-        name = ask_text(self.root, "북마크 추가", f"북마크 이름  ({page + 1}쪽)", default)
-        if not name:
-            return None
+            name = ask_text(self.root, "북마크 추가", f"북마크 이름  ({page + 1}쪽)", default)
+            if not name:
+                return None
         node = {"type": "mark", "name": name, "path": self.path, "page": page, "added": time.time()}
         if pos:
             node["pos"] = pos
@@ -3474,6 +3740,7 @@ class App:
         m.add_separator()
         m.add_command(label="이 쪽 왼쪽으로 회전", command=lambda: self.rotate_pages([self.page_no], -90))
         m.add_command(label="이 쪽 오른쪽으로 회전", command=lambda: self.rotate_pages([self.page_no], 90))
+        m.add_command(label="전체 쪽 오른쪽으로 회전", command=lambda: self.rotate_all(90))
         m.add_command(label="이 쪽 캡쳐", command=lambda: self.capture(self.page_no, None))
         m.tk_popup(e.x_root, e.y_root)
 
@@ -3626,7 +3893,7 @@ class App:
             page.insert_text(origin, text, **kw)
 
     def edit_dialog(self, it):
-        dlg = tk.Toplevel(self.root)
+        dlg = Popup(self.root)
         dlg.title("글자 수정")
         dlg.transient(self.root)
         dlg.grab_set()
@@ -3749,7 +4016,7 @@ class App:
             self.capture_preview(pix, p, copied)
 
     def capture_preview(self, pix, p, copied):
-        dlg = tk.Toplevel(self.root)
+        dlg = Popup(self.root)
         dlg.title("캡쳐")
         dlg.transient(self.root)
         frm = ttk.Frame(dlg, padding=8)
@@ -3859,7 +4126,7 @@ class App:
             messagebox.showerror(APP, f"도형 그리기 실패:\n{ex}")
 
     def memo_dialog(self, initial="", existing=False):
-        dlg = tk.Toplevel(self.root)
+        dlg = Popup(self.root)
         dlg.title("메모 수정" if existing else "메모 추가")
         dlg.transient(self.root)
         frm = ttk.Frame(dlg, padding=10)
@@ -3937,6 +4204,11 @@ class App:
         self.status.set("지웠습니다.")
 
     # ---------- 회전 · 쪽 골라 저장 ----------
+    def rotate_all(self, delta):
+        if self.doc:
+            self.rotate_pages(list(range(len(self.doc))), delta)
+            self.status.set(f"전체 {len(self.doc)}쪽을 회전했습니다. (Ctrl+Z 되돌리기)")
+
     def rotate_pages(self, pages, delta):
         if not self.doc:
             return
@@ -3950,7 +4222,7 @@ class App:
         self.status.set(f"{len(pages)}쪽을 회전했습니다." if len(pages) > 1 else f"{pages[0] + 1}쪽을 회전했습니다.")
 
     def _pages_dialog(self, title, hint, extra=None):
-        dlg = tk.Toplevel(self.root)
+        dlg = Popup(self.root)
         dlg.title(title)
         dlg.transient(self.root)
         dlg.resizable(False, False)
@@ -4031,7 +4303,7 @@ class App:
     def find_replace(self):
         if not self.doc:
             return
-        dlg = tk.Toplevel(self.root)
+        dlg = Popup(self.root)
         dlg.title("찾아 바꾸기")
         dlg.transient(self.root)
         frm = ttk.Frame(dlg, padding=10)

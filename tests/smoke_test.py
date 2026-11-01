@@ -171,7 +171,10 @@ check(len(app.cv.find_withtag("tsel")) > 0, "선택 표시")
 shot("2_text_selected")
 app.copy_selection()
 check(root.clipboard_get().startswith("Hello"), "Ctrl+C 복사")
+_ask = S.ask_text
+S.ask_text = lambda *a, **k: errors.append("선택한 글자로 북마크할 때 이름 창이 뜸") or "x"
 bm = app.new_bookmark()
+S.ask_text = _ask
 check(bm and bm["name"].startswith("Hello") and bm["page"] == 0 and "pos" in bm, f"북마크: {bm}")
 app.select_text(0, fitz.Point(70, 95), fitz.Point(200, 140))
 check("\n" in app.sel["text"], "여러 줄 선택")
@@ -297,6 +300,33 @@ check(len(app.cv.find_withtag("memo")) == 0, "메모 펼쳐 보기 끄기")
 app.memo_side.set(True)
 app.render()
 
+step("전체 쪽 회전")
+before = [app.doc[i].rotation for i in range(len(app.doc))]
+app.rotate_all(90)
+after = [app.doc[i].rotation for i in range(len(app.doc))]
+check(all((b + 90) % 360 == a for b, a in zip(before, after)), f"전체 회전 {before} → {after}")
+app.do_undo()
+check([app.doc[i].rotation for i in range(len(app.doc))] == before, "전체 회전 되돌리기")
+
+step("이 파일에서 찾기 (Ctrl+F)")
+app.focus_search("file")
+sp = app.search_panel
+check(sp.scope.get() == "file" and sp.folder_box.winfo_manager() == "", "기본은 이 파일에서")
+sp.query.set("page")
+sp.toggle()
+end = time.time() + 15
+while sp.running and time.time() < end:
+    pump(0.05)
+check(len(sp.hits) >= 2, f"찾은 곳 {len(sp.hits)}")
+check(app.sel and app.sel["text"] == "page", "찾은 곳 표시")
+i0 = sp.hit_idx
+sp.step(1)
+check(sp.hit_idx == (i0 + 1) % len(sp.hits), "다음 찾기")
+sp.toggle()          # 같은 검색어로 다시 Enter → 다음
+check(sp.hit_idx == (i0 + 2) % len(sp.hits), "Enter = 다음")
+shot("7_find_in_file")
+app.clear_selection()
+
 step("회전 / 쪽 범위")
 rot = app.doc[2].rotation
 app.rotate_pages([2], 90)
@@ -329,9 +359,30 @@ pump(0.2)
 check(app.path == os.path.abspath(pdf2), "탭 이동")
 check(os.path.abspath(pdf2) in app.conf["recent"], "최근 파일 기록")
 check(len(app.recent_panel.tv.get_children()) >= 2, "최근 패널 목록")
-app.close_tab(app.tab)
-pump(0.2)
-check(len(app.tabs) == 1, "탭 닫기")
+step("탭 × 버튼으로 닫기")
+st_ = S.ttk.Style(root)
+check(any("tabclose" in n for n in st_.element_names()), "× 그림 요소")
+pump(0.3)
+spot = None
+for yy in range(2, 30, 3):
+    for xx in range(0, 600, 2):
+        if "tabclose" in app.tabbar.identify(xx, yy):
+            spot = (xx, yy)
+            break
+    if spot:
+        break
+check(spot is not None, "탭에서 × 위치 찾기")
+if spot:
+    ev = Ev()
+    ev.x, ev.y = spot
+    idx = app.tabbar.index(f"@{spot[0]},{spot[1]}")
+    app.tabs[idx]._dirty = False
+    app.on_tab_press(ev)
+    app.on_tab_release(ev)
+    pump(0.2)
+    check(len(app.tabs) == 1, "× 눌러서 탭 닫기")
+else:
+    app.close_tab(app.tab)
 
 step("즐겨찾기 / 북마크 / 개수 제한")
 app.conf["favorites"].append({"type": "file", "name": "a", "path": pdf1, "added": 1})
@@ -341,8 +392,10 @@ app.conf["prefs"]["fav_max"] = 100
 node = app.new_favorite()
 check(node and node["path"] == app.path, "즐겨찾기 항목")
 
-step("파일 검색 (본문)")
+step("폴더에서 PDF 찾기 (본문)")
 sp = app.search_panel
+app.focus_search("folder")
+check(sp.folder_box.winfo_manager() != "", "폴더 칸 표시")
 sp.folder.set(TMP)
 sp.query.set("Landscape")
 sp.body.set(True)
@@ -354,10 +407,17 @@ check(not sp.running, "검색 끝남")
 check(len(sp.results) >= 2, f"검색 결과 {len(sp.results)}개")
 
 step("설정 / 사용방법 / 정보 창")
+root.event_generate("<Motion>", warp=True, x=300, y=200)
+pump(0.1)
 app.settings_dialog()
 app.show_help()
 app.show_about()
-pump(0.3)
+pump(0.4)
+pops = [w for w in root.winfo_children() if isinstance(w, S.Popup)]
+check(len(pops) >= 3 and all(w.winfo_viewable() for w in pops), "팝업창 표시")
+px, py = root.winfo_pointerx(), root.winfo_pointery()
+near = [w for w in pops if abs(w.winfo_rootx() - px) < 400 and abs(w.winfo_rooty() - py) < 400]
+check(len(near) >= 1, f"팝업이 마우스 근처에 ({px},{py})")
 for w in root.winfo_children():
     if isinstance(w, tk.Toplevel):
         w.destroy()
