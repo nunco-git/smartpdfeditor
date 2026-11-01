@@ -103,7 +103,8 @@ def icons(S):
     im, d = new()
     d.line(P(2.5, 4, 10.5, 4), fill=S, width=int(2 * K))
     d.line(P(6.5, 4, 6.5, 14), fill=S, width=int(2 * K))
-    d.polygon(P(10, 16.5, 16.5, 10, 18.5, 12, 12, 18.5, 9.5, 19), fill=ORANGE)
+    d.polygon(P(10, 16.5, 16.5, 10, 18.5, 12, 12, 18.5, 9.5, 19), fill=S)
+    d.polygon(P(11.2, 16.8, 16.5, 11.5, 17.2, 12.2, 11.9, 17.5), fill=ORANGE)
     d.polygon(P(9.5, 19, 10, 16.5, 12, 18.5), fill=S)
     out["t_edit"] = im
 
@@ -164,7 +165,8 @@ def icons(S):
 
     # 편집 모드 (연필)
     im, d = new()
-    d.polygon(P(3, 14.5, 13.5, 4, 16, 6.5, 5.5, 17), fill=ORANGE)
+    d.polygon(P(3, 14.5, 13.5, 4, 16, 6.5, 5.5, 17), fill=S)
+    d.polygon(P(4.6, 14.6, 13.6, 5.6, 14.4, 6.4, 5.4, 15.4), fill=ORANGE)
     d.polygon(P(13.5, 4, 15, 2.5, 17.5, 5, 16, 6.5), fill=PINK)
     d.polygon(P(3, 14.5, 5.5, 17, 2.2, 17.8), fill=S)
     out["m_edit"] = im
