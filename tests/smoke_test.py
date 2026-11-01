@@ -26,6 +26,7 @@ S.CONF_DIR = os.path.join(TMP, "conf")
 S.CONF_FILE = os.path.join(S.CONF_DIR, "settings.json")
 S.AD_CACHE = os.path.join(S.CONF_DIR, "ad_cache")
 S.AD_URL = "https://127.0.0.1:9/none.json"   # 광고 서버는 점검에서 제외 (실패해도 조용히 넘어가야 함)
+base_threads = 0
 stats_sent = []   # 사용 통계는 실제로 보내지 않고 기록만 (점검이 설치 수에 섞이지 않게)
 S.stats_call = lambda url, method, body: stats_sent.append((url, method, body))
 
@@ -106,6 +107,7 @@ root.report_callback_exception = lambda et, ev, tb: errors.append(
     f"[{step_name[0]}] 콜백 오류: {et.__name__}: {ev}")
 
 step("프로그램 시작 + 파일 열기")
+base_threads = S.threading.active_count()
 app = S.App(root, [pdf1], listen=False)
 root.geometry("1000x690+0+0")
 root.deiconify()
@@ -678,24 +680,34 @@ app.apply_ads({"interval": 5, "ads": []})
 check(int(app.ad_frame.cget("height")) <= 1, "광고 없으면 최소화")
 
 step("사용 통계")
-stats_sent.clear()
+def wait_for(cond, sec=5):
+    end = time.time() + sec
+    while time.time() < end and not cond():
+        pump(0.05)
+    return cond()
+wait_for(lambda: S.threading.active_count() <= base_threads, 3)
 app.conf["prefs"].pop("last_ping", None)
 app.conf["prefs"]["no_stats"] = False
+stats_sent.clear()
 app.send_stats()
-pump(0.5)
+today = __import__("datetime").date.today().isoformat()
+wait_for(lambda: app.conf["prefs"].get("last_ping") == today)
 iid = app.conf["prefs"].get("install_id", "")
 check(len(iid) == 32, "무작위 번호 만들기")
+print("     보낸 것:", [(u.split("/apps/")[-1], m, b) for u, m, b in stats_sent], flush=True)
 check(len(stats_sent) == 2 and "/apps/smartpdfeditor/installs/" + iid in stats_sent[0][0], "설치 기록 보내기")
-check(set(stats_sent[0][2]) <= {"v", "last", "first"} and stats_sent[0][2]["v"] == S.APP_VER, "번호·버전만 보냄")
-check(app.conf["prefs"].get("last_ping") == __import__("datetime").date.today().isoformat(), "오늘 보냄 기록")
+check(bool(stats_sent) and set(stats_sent[0][2]) <= {"v", "last", "first"}
+      and stats_sent[0][2]["v"] == S.APP_VER, "번호·버전만 보냄")
+check(app.conf["prefs"].get("last_ping") == today, "오늘 보냄 기록")
+n = len(stats_sent)
 app.send_stats()
-pump(0.3)
-check(len(stats_sent) == 2, "하루 한 번만")
-stats_sent.clear()
+pump(0.5)
+check(len(stats_sent) == n, "하루 한 번만")
 app.conf["prefs"].pop("last_ping", None)
 app.conf["prefs"]["no_stats"] = True
+stats_sent.clear()
 app.send_stats()
-pump(0.3)
+pump(0.5)
 check(not stats_sent, "보내지 않기 설정")
 
 step("종료")
