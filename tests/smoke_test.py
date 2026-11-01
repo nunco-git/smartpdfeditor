@@ -184,6 +184,24 @@ app.dirty = False
 app.goto(0, 0.5)
 pump(0.2)
 
+step("좁은 창에서 도구줄 두 줄")
+app.fit_toolbar()
+pump(0.2)
+in2 = str(app.toolarea.pack_info().get("in")) == str(app.bar2)
+check(in2, "1000px 창에서는 도구 버튼이 둘째 줄로")
+root.geometry("1900x690+0+0")
+pump(0.3)
+app.fit_toolbar()
+pump(0.2)
+if root.winfo_width() >= 1500:
+    check(str(app.toolarea.pack_info().get("in")) == str(app.bar), "넓은 창에서는 한 줄")
+else:
+    print("   (이 화면은 넓은 창을 만들 수 없어 한 줄 확인은 생략)")
+root.geometry("1000x690+0+0")
+pump(0.3)
+app.fit_toolbar()
+pump(0.2)
+
 step("뷰어 / 편집 모드")
 app.app_mode.set("view")
 app.set_app_mode()

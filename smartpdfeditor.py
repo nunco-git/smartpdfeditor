@@ -1393,8 +1393,11 @@ class App:
 
     def _build_ui(self):
         self._build_menu()
-        bar = ttk.Frame(self.root, padding=(4, 3))
+        self.topbox = ttk.Frame(self.root)       # 도구줄 1~2줄 (창이 좁으면 도구 버튼이 둘째 줄로)
+        self.topbox.pack(fill="x")
+        bar = self.bar = ttk.Frame(self.topbox, padding=(4, 3))
         bar.pack(fill="x")
+        self.bar2 = ttk.Frame(self.topbox, padding=(4, 0, 4, 3))
         right = ttk.Frame(bar)          # 오른쪽 묶음을 먼저 배치 → 창이 좁아도 항상 보임
         right.pack(side="right")
 
@@ -1429,8 +1432,9 @@ class App:
         btn("회전…", self.rotate_dialog, "여러 쪽 한꺼번에 회전", 5)
 
         # 편집 모드에서만 보이는 도구 버튼 + 도구별 옵션
-        self.toolarea = ttk.Frame(bar)
-        self.toolarea.pack(side="left", padx=(6, 0))
+        self.toolarea = ttk.Frame(self.topbox)
+        self.toolarea.pack(in_=bar, side="left", padx=(6, 0))
+        self._fit_job = None
         self.toolbtns = ttk.Frame(self.toolarea)
         short = {"edit": "✎수정", "mark": "🖍색칠", "hide": "■감추기", "shape": "◻도형", "memo": "💬메모",
                  "erase": "⌫지우개", "capture": "✂캡쳐"}
@@ -1438,8 +1442,6 @@ class App:
                 "hide": "감추기 — 아래 내용을 지우고 덮기", "shape": "도형 — 사각형·원·선·화살표 (Shift: 정사각형·정원)",
                 "memo": "메모 붙이기", "erase": "색칠·도형·메모 지우기", "capture": "영역 캡쳐 → 클립보드 (Ctrl+Shift+C)"}
         self.tool_rbs = {}
-        self.tool_short = short
-        self._compact = None
         for k, _ in TOOLS:
             rb = ttk.Radiobutton(self.toolbtns, text=short[k], value=k, variable=self.mode, style="Toolbutton",
                                  command=self.on_mode)
@@ -2320,8 +2322,10 @@ class App:
             for w in ("TEntry", "TSpinbox", "TCombobox"):
                 st.configure(w, fieldbackground=field, foreground=fg, background=bg, arrowcolor=fg)
             st.map("TCombobox", fieldbackground=[("readonly", field)])
-            st.configure("TScrollbar", background=bg, arrowcolor=fg)
-            st.configure("Vertical.TScrollbar", background=bg)
+            for sb_ in ("TScrollbar", "Vertical.TScrollbar", "Horizontal.TScrollbar"):
+                st.configure(sb_, background=field, troughcolor=bg, bordercolor=bg, arrowcolor=fg,
+                             lightcolor=field, darkcolor=field)
+            st.map("TScrollbar", background=[("active", hover)])
             self.root.configure(bg=bg)
             lbl_bg = bg
         for w, is_link in self.themed_labels:
@@ -2337,6 +2341,7 @@ class App:
         except (AttributeError, tk.TclError):
             pass
         self.cv.configure(bg=self.tcolor("canvas") or "#5a5a5a")
+        self.root.after(50, self.fit_toolbar)     # 글꼴 크기가 바뀌면 도구줄 다시 맞춤
         if hasattr(self, "theme_var"):
             self.theme_var.set(self.theme.get("preset", "clip"))
         self.load_wall()
@@ -2359,8 +2364,10 @@ class App:
         if path and os.path.exists(path):
             try:
                 pix = fitz.Pixmap(path)
-                if pix.alpha or pix.n != 3:
-                    pix = fitz.Pixmap(fitz.csRGB, pix, 0)
+                if pix.alpha:
+                    pix = fitz.Pixmap(pix, 0)            # 투명 부분 없애기
+                if pix.n != 3:
+                    pix = fitz.Pixmap(fitz.csRGB, pix)   # 흑백·CMYK → RGB
                 self._wall_src = pix
             except Exception:
                 self.status.set("배경 그림을 열 수 없습니다.")
@@ -2831,14 +2838,34 @@ class App:
         return found
 
     def on_root_resize(self, e=None):
-        """창이 좁으면 도구 버튼을 아이콘만 표시"""
         if e is not None and e.widget is not self.root:
             return
-        compact = self.root.winfo_width() < 1250
-        if compact != self._compact:
-            self._compact = compact
-            for k, rb in self.tool_rbs.items():
-                rb.config(text=self.tool_short[k][:1] if compact else self.tool_short[k], width=2 if compact else 0)
+        if self._fit_job:
+            self.root.after_cancel(self._fit_job)
+        self._fit_job = self.root.after(120, self.fit_toolbar)
+
+    def fit_toolbar(self):
+        """도구줄이 창 폭에 다 안 들어가면 도구 버튼을 둘째 줄로 (잘려서 안 보이는 일 없게)"""
+        self._fit_job = None
+        self.root.update_idletasks()
+        W = self.root.winfo_width()
+        if W < 100:
+            return
+        try:
+            in_bar = str(self.toolarea.pack_info().get("in")) == str(self.bar)
+        except tk.TclError:
+            in_bar = False
+        others = self.bar.winfo_reqwidth() - (self.toolarea.winfo_reqwidth() if in_bar else 0)
+        widest_opt = max((f.winfo_reqwidth() for f in self.opt.values()), default=0)
+        need = others + self.toolbtns.winfo_reqwidth() + widest_opt + 24
+        if need > W and in_bar:
+            self.toolarea.pack_forget()
+            self.bar2.pack(fill="x")
+            self.toolarea.pack(in_=self.bar2, side="left")
+        elif need <= W and not in_bar:
+            self.toolarea.pack_forget()
+            self.bar2.pack_forget()
+            self.toolarea.pack(in_=self.bar, side="left", padx=(6, 0))
 
     def pick_tool(self, tool):
         self.mode.set(tool)
