@@ -263,7 +263,24 @@ for kind in S.SHAPES:
     print("   - 도형", kind, flush=True)
     app.shape_kind.set(kind)
     app.do_shape(fitz.Point(100, 300), fitz.Point(200, 380))
-check(len(list(app.doc[0].annots())) == n0 + 1 + len(S.SHAPES), "도형 4종 추가")
+check(len(list(app.doc[0].annots())) == n0 + 1 + len(S.SHAPES), f"도형 {len(S.SHAPES)}종 추가")
+pg0 = app.doc[0]
+kinds = [a.type[1] for a in pg0.annots()]
+del pg0
+check("Polygon" in kinds, f"삼각형 = 다각형 주석 {kinds}")
+check(kinds.count("Circle") == 2, "원 + 타원")
+
+step("편집해도 화면 전체를 지우지 않음 (번쩍임 없음)")
+app.goto(0)
+pump(0.3)
+before_ids = app.cv.find_withtag("img0")
+bg_ids = app.cv.find_withtag("bg")
+app.page_no = 0
+app.do_shape(fitz.Point(100, 450), fitz.Point(160, 500))
+after_ids = app.cv.find_withtag("img0")
+check(before_ids and before_ids == after_ids, f"쪽 그림은 그 자리에서 교체 {before_ids} → {after_ids}")
+check(app.cv.find_withtag("bg") == bg_ids, "쪽 배경을 다시 만들지 않음")
+app.do_undo()
 app.page_no = 1
 print("   - 회전된 쪽 색칠", flush=True)
 app.do_area("mark", fitz.Rect(60, 80, 300, 110))   # 회전된 쪽

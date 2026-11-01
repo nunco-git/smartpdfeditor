@@ -221,7 +221,8 @@ HELP_TEXT = [
 IPC_PORT = 48517          # 프로그램 하나만 실행: 두 번째 실행은 이 포트로 파일을 넘기고 종료
 IPC_TOKEN = "PDFTE-1"
 SEARCH_MAX = 3000
-SHAPES = ("사각형", "원", "선", "화살표")
+SHAPES = ("사각형", "원", "타원", "삼각형", "선", "화살표")
+BOX_SHAPES = ("사각형", "원", "타원", "삼각형")      # 영역을 끌어서 그리는 도형
 TOOLS = [("edit", "✎ 글자수정"), ("mark", "🖍 색칠"), ("hide", "■ 감추기"), ("shape", "◻ 도형"),
          ("memo", "💬 메모"), ("erase", "⌫ 지우개"), ("capture", "✂ 캡쳐")]
 TOOL_LABEL = dict(TOOLS)
@@ -1850,7 +1851,7 @@ class App:
         self.swatch = color_opts(self.opt["mark"], self.mark_color, ("#ffe600", "#7cf27c", "#7fd3ff", "#ff9ecb"),
                                  self.set_color, "지금 색칠 색 (누르면 색상표)")
         f = self.opt["shape"]
-        ttk.Combobox(f, textvariable=self.shape_kind, values=SHAPES, width=5, state="readonly").pack(side="left", padx=(4, 0))
+        ttk.Combobox(f, textvariable=self.shape_kind, values=SHAPES, width=6, state="readonly").pack(side="left", padx=(4, 0))
         self.shape_swatch = color_opts(f, self.shape_color, ("#e53935", "#1e88e5", "#000000"),
                                        self.set_shape_color, "지금 선 색 (누르면 색상표)")
         sp = ttk.Spinbox(f, from_=0.5, to=20, increment=0.5, textvariable=self.shape_width, width=3)
@@ -3206,14 +3207,11 @@ class App:
         return total_w, total_h
 
     def render(self, goto=None):
-        """전체 다시 그리기. goto: 이 쪽으로 이동 / None: 지금 스크롤 위치 유지"""
-        self.cv.delete("all")
-        self.imgs.clear()
-        self.items_cache.clear()
-        self.words_cache.clear()
-        self.annot_cache.clear()
-        self.mats.clear()
+        """전체 다시 그리기. goto: 이 쪽으로 이동 / None: 지금 스크롤 위치 유지
+        계산을 모두 끝낸 뒤에 화면을 지우고 바로 다시 그려서 번쩍임이 없게 함"""
         if not self.doc:
+            self.cv.delete("all")
+            self.imgs.clear()
             return
         yfrac, xfrac = self.cv.yview()[0], self.cv.xview()[0]
         self.page_no = min(self.page_no, len(self.doc) - 1)
@@ -3222,7 +3220,13 @@ class App:
             self.sizes = [(r.width, r.height) for r in (self.doc[i].rect for i in range(len(self.doc)))]
             self._sizes_key = key
         self._memo_pages = self.find_memo_pages() if self.memo_side.get() and self.cols() == 1 else set()
-        self.zoom = self.calc_zoom()
+        self.zoom = self.calc_zoom()          # (화면 크기를 읽느라 화면이 한 번 갱신됨 → 지우기 전에)
+        self.cv.delete("all")
+        self.imgs.clear()
+        self.items_cache.clear()
+        self.words_cache.clear()
+        self.annot_cache.clear()
+        self.mats.clear()
         tw, th = self.layout()
         self.cv.configure(scrollregion=(0, 0, tw, th))
         for p, (x, y, w, h) in self.slots.items():
@@ -3243,6 +3247,33 @@ class App:
         self.update_visible()
         self.draw_selection()
         self._sync_page = True
+
+    def refresh_pages(self, pages):
+        """고친 쪽만 그림을 바꿔 끼움 (화면 전체를 지우지 않아 번쩍임 없음)"""
+        if not self.doc:
+            return
+        new_memo = self.find_memo_pages() if self.memo_side.get() and self.cols() == 1 else set()
+        if bool(new_memo) != bool(self._memo_pages):   # 메모 칸이 생기거나 없어지면 배치가 바뀜
+            self.render()
+            return
+        self._memo_pages = new_memo
+        for p in set(pages):
+            for c in (self.items_cache, self.words_cache, self.annot_cache):
+                c.pop(p, None)
+            if p not in self.imgs or p not in self.slots:
+                continue
+            try:
+                pix = self.doc[p].get_pixmap(matrix=fitz.Matrix(self.zoom, self.zoom), alpha=False)
+                img = tk.PhotoImage(data=base64.b64encode(pix.tobytes("png")))
+            except Exception:
+                continue
+            self.cv.itemconfigure(f"img{p}", image=img)     # 같은 자리에서 그림만 교체
+            self.imgs[p] = img
+            self.cv.delete(f"memo{p}")
+            if p in self._memo_pages:
+                self.draw_memos(p)
+        self.cv.delete("hl")
+        self.draw_selection()
 
     def scroll_to(self, p, frac=None):
         """p쪽으로 이동. frac: 쪽 안의 세로 위치(0~1, 회전 반영 전 좌표 기준)"""
@@ -3569,8 +3600,9 @@ class App:
         self.dragging = False
 
     def constrain(self, x0, y0, x1, y1, e):
-        """Shift: 정사각형·정원 / 선은 45° 단위"""
-        if not (getattr(e, "state", 0) & 0x1):
+        """Shift: 정사각형·정삼각형 꼴 / 선은 45° 단위.  '원'은 항상 정원"""
+        always = self.mode.get() == "shape" and self.shape_kind.get() == "원"
+        if not always and not (getattr(e, "state", 0) & 0x1):
             return x1, y1
         dx, dy = x1 - x0, y1 - y0
         if self.mode.get() == "shape" and self.shape_kind.get() in ("선", "화살표"):
@@ -3622,8 +3654,11 @@ class App:
             stip = "gray50" if self.shape_fill.get() == "반투명" else ""
             if kind == "사각형":
                 self.cv.create_rectangle(x0, y0, x, y, outline=col, width=w, fill=fill, stipple=stip, tags="sel")
-            elif kind == "원":
+            elif kind in ("원", "타원"):
                 self.cv.create_oval(x0, y0, x, y, outline=col, width=w, fill=fill, stipple=stip, tags="sel")
+            elif kind == "삼각형":
+                self.cv.create_polygon(*self.triangle_pts(x0, y0, x, y), outline=col, width=w, fill=fill,
+                                       stipple=stip, tags="sel")
             else:
                 self.cv.create_line(x0, y0, x, y, fill=col, width=w, tags="sel",
                                     arrow="last" if kind == "화살표" else "none",
@@ -3668,7 +3703,11 @@ class App:
             return
         if self.dragging and mode == "shape":
             x1, y1 = self.clamp_to_page(p, *self.constrain(x0, y0, x1, y1, e))
-            self.do_shape(self.canvas_to_page(p, x0, y0), self.canvas_to_page(p, x1, y1))
+            pts = None
+            if self.shape_kind.get() == "삼각형":   # 화면에서 본 모양 그대로 (회전된 쪽도 꼭짓점이 위로)
+                c = self.triangle_pts(x0, y0, x1, y1)
+                pts = [self.canvas_to_page(p, c[i], c[i + 1]) for i in (0, 2, 4)]
+            self.do_shape(self.canvas_to_page(p, x0, y0), self.canvas_to_page(p, x1, y1), pts)
             return
         if self.dragging and mode in ("mark", "hide"):
             x1, y1 = self.clamp_to_page(p, x1, y1)   # 끈 영역이 쪽 밖으로 나가면 쪽 안으로 자름
@@ -3819,7 +3858,7 @@ class App:
                 a.update()
             self.dirty = True
             self.clear_selection()
-            self.render()
+            self.refresh_pages([p])
             self.status.set("선택한 글자를 색칠했습니다.")
         except Exception as ex:
             messagebox.showerror(APP, f"색칠 실패:\n{ex}")
@@ -4045,7 +4084,7 @@ class App:
                 page = self.doc[self.page_no]
                 self.apply_edits(page, [(it["rect"], it["origin"], sz, it["color"], bold_var.get(), new)])
                 self.dirty = True
-                self.render()
+                self.refresh_pages([self.page_no])
                 self.status.set("수정했습니다. (Ctrl+Z 되돌리기, Ctrl+S 저장)")
             except Exception as ex:
                 messagebox.showerror(APP, f"수정 실패:\n{ex}")
@@ -4084,7 +4123,7 @@ class App:
                     except (TypeError, AttributeError):
                         page.apply_redactions()
             self.dirty = True
-            self.render()
+            self.refresh_pages([self.page_no])
             self.status.set("색칠했습니다." if mode == "mark" else "감췄습니다. (Ctrl+Z로 되돌리기)")
         except Exception as ex:
             messagebox.showerror(APP, f"실패:\n{ex}")
@@ -4200,9 +4239,15 @@ class App:
         if c:
             self.set_shape_color(c)
 
-    def do_shape(self, a, b):
+    @staticmethod
+    def triangle_pts(x0, y0, x1, y1):
+        """끈 영역 안의 이등변삼각형 (꼭짓점 위) → [x, y, x, y, x, y]"""
+        l, r_, t, b = min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
+        return [(l + r_) / 2, t, l, b, r_, b]
+
+    def do_shape(self, a, b, pts=None):
         kind = self.shape_kind.get()
-        if kind in ("사각형", "원"):
+        if kind in BOX_SHAPES:
             r = fitz.Rect(a, b).normalize()
             if r.width < 2 or r.height < 2:
                 return
@@ -4220,11 +4265,15 @@ class App:
             with unrotated(page):
                 if kind == "사각형":
                     an = page.add_rect_annot(r)
-                elif kind == "원":
+                elif kind in ("원", "타원"):
                     an = page.add_circle_annot(r)
+                elif kind == "삼각형":
+                    if not pts:
+                        pts = [fitz.Point((r.x0 + r.x1) / 2, r.y0), fitz.Point(r.x0, r.y1), fitz.Point(r.x1, r.y1)]
+                    an = page.add_polygon_annot(pts)
                 else:
                     an = page.add_line_annot(a, b)
-                if kind in ("사각형", "원") and fill != "없음":
+                if kind in BOX_SHAPES and fill != "없음":
                     an.set_colors(stroke=col, fill=col)
                     if fill == "반투명":
                         an.set_opacity(0.4)
@@ -4237,7 +4286,7 @@ class App:
                 an.set_info(title="도형")
                 an.update()
             self.dirty = True
-            self.render()
+            self.refresh_pages([self.page_no])
             self.status.set(f"{kind}을(를) 그렸습니다. (지우개 도구로 지우기 / Ctrl+Z)")
         except Exception as ex:
             messagebox.showerror(APP, f"도형 그리기 실패:\n{ex}")
@@ -4299,7 +4348,7 @@ class App:
                     a.set_colors(stroke=(1, 0.82, 0))
                     a.update()
             self.dirty = True
-            self.render()
+            self.refresh_pages([self.page_no])
             self.status.set("메모를 저장했습니다. 메모 위에 마우스를 올리면 내용이 보입니다.")
         except Exception as ex:
             messagebox.showerror(APP, f"메모 실패:\n{ex}")
@@ -4317,7 +4366,7 @@ class App:
             self.push_undo()
             page.delete_annot(page.load_annot(target))
         self.dirty = True
-        self.render()
+        self.refresh_pages([self.page_no])
         self.status.set("지웠습니다.")
 
     # ---------- 회전 · 쪽 골라 저장 ----------
@@ -4475,7 +4524,7 @@ class App:
                     self.apply_edits(self.doc[pn], edits)
                 self.dirty = True
                 dlg.destroy()
-                self.render()
+                self.refresh_pages(list(plan))
                 self.status.set(f"{total}곳을 바꿨습니다.")
             except Exception as ex:
                 messagebox.showerror(APP, f"바꾸기 실패:\n{ex}", parent=dlg)
