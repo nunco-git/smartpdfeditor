@@ -277,6 +277,26 @@ print("   - 지우개", flush=True)
 app.erase_at(fitz.Point((c.x0 + c.x1) / 2, (c.y0 + c.y1) / 2))
 check(len(list(app.doc[0].annots())) == n0 + len(S.SHAPES), "지우개로 하나 삭제")
 
+step("메모를 오른쪽에 펼쳐 보기")
+app.view_var.set(S.VIEW_LABEL["cont"])
+app.on_view()
+pg0 = app.doc[0]
+pg0.add_text_annot((300, 300), "오른쪽에 보이는 메모입니다.\n두 번째 줄")
+pg0.add_text_annot((420, 320), "두 번째 메모")
+del pg0
+app.render(goto=0)
+pump(0.4)
+check(app._memo_pages == {0}, f"메모 있는 쪽 {app._memo_pages}")
+check(len(app.cv.find_withtag("memo0")) >= 2, "쪽 오른쪽에 메모 쪽지")
+x, y, w, h = app.slots[0]
+check(x + w + S.MEMO_W <= float(app.cv.cget("scrollregion").split()[2]) + 1, "메모 칸 자리 확보")
+shot("5_memo_side")
+app.memo_side.set(False)
+app.render()
+check(len(app.cv.find_withtag("memo")) == 0, "메모 펼쳐 보기 끄기")
+app.memo_side.set(True)
+app.render()
+
 step("회전 / 쪽 범위")
 rot = app.doc[2].rotation
 app.rotate_pages([2], 90)
@@ -342,15 +362,35 @@ for w in root.winfo_children():
     if isinstance(w, tk.Toplevel):
         w.destroy()
 
+step("색상표")
+pop = app.palette_popup(app.swatch, app.set_color)
+pump(0.2)
+cells = [w for fr in pop.winfo_children() for w in fr.winfo_children() if w.cget("text") == ""]
+check(len(cells) == 24, f"색상표 {len(cells)}색")
+shot("6_palette")
+pop.destroy()
+app.set_color("#ce93d8")
+check(app.swatch.cget("bg") == "#ce93d8", "색칠 색 바뀜")
+
+step("아이콘")
+check(len(app.icon_users) >= 25, f"아이콘 {len(app.icon_users)}개")
+check(app.tool_rbs["mark"].cget("image") != "", "도구 아이콘")
+
 step("화면 꾸미기 (테마 · 글꼴 · 배경 그림)")
 app.view_var.set(S.VIEW_LABEL["cont"])
 app.on_view()
 app.app_mode.set("edit")
 app.set_app_mode()
+st = S.ttk.Style(root)
 for key in S.THEMES:
     app.set_preset(key)
     pump(0.2)
     check(app.cv.cget("bg").lower() == S.THEMES[key]["canvas"], f"{key} 문서 배경 색")
+    if key in ("clip", "light"):
+        check(str(st.lookup("Top.TFrame", "background")).lower() == S.THEMES[key]["bg"], f"{key}: 도구줄에 테마 색")
+        check(str(st.lookup("TFrame", "background")).lower() == S.NEUTRAL["bg"], f"{key}: 아래쪽은 기본 색")
+    if key == "dark":
+        check(str(st.lookup("TFrame", "background")).lower() == S.THEMES["dark"]["bg"], "어둡게: 전체 적용")
     shot(f"theme_{key}")
 wall = os.path.join(TMP, "wall.png")
 with open(wall, "wb") as f:
