@@ -23,7 +23,7 @@ jobs:
       - name: 필요한 프로그램 설치
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --only-binary=:all: -r requirements.txt
+          python -m pip install --only-binary=:all: -r requirements.txt pillow
 
       - name: 기능 점검 (실제 화면으로 자동 테스트)
         env:
@@ -31,6 +31,13 @@ jobs:
         run: |
           python -X faulthandler -u tests/smoke_test.py
           if ($LASTEXITCODE -ne 0) { "종료코드 $LASTEXITCODE"; exit 1 }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: screenshots/
+          retention-days: 14
 
       - name: exe 만들기
         run: >

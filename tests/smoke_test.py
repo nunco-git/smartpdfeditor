@@ -71,6 +71,23 @@ def pump(sec=0.3):
         time.sleep(0.01)
 
 
+SHOTS = os.path.join(ROOT, "screenshots")
+
+
+def shot(name):
+    """화면 모습 확인용 스크린샷 (Actions의 Artifacts에서 볼 수 있음)"""
+    try:
+        from PIL import ImageGrab
+        pump(0.4)
+        root.lift()
+        x, y = root.winfo_rootx(), root.winfo_rooty()
+        os.makedirs(SHOTS, exist_ok=True)
+        ImageGrab.grab(bbox=(x, y, x + root.winfo_width(), y + root.winfo_height())).save(
+            os.path.join(SHOTS, name + ".png"))
+    except Exception as ex:
+        print("   (스크린샷 생략:", ex, ")")
+
+
 def check(cond, msg):
     if not cond:
         errors.append(f"[{step_name[0]}] 실패: {msg}")
@@ -139,6 +156,7 @@ app.wheel_page.set(False)
 app.goto(0)
 pump(0.2)
 
+shot("1_viewer_mode")
 step("아래 상태줄 보기 아이콘")
 check(len(app.view_icons) == 5, "보기 방식 아이콘 5개")
 
@@ -150,6 +168,7 @@ check(len(w) > 3, "단어 목록")
 app.select_text(0, fitz.Point(70, 95), fitz.Point(200, 95))
 check(app.sel and app.sel["text"].startswith("Hello"), f"선택 글자: {app.sel and app.sel['text']!r}")
 check(len(app.cv.find_withtag("tsel")) > 0, "선택 표시")
+shot("2_text_selected")
 app.copy_selection()
 check(root.clipboard_get().startswith("Hello"), "Ctrl+C 복사")
 bm = app.new_bookmark()
@@ -176,6 +195,8 @@ check(app.toolbtns.winfo_manager() != "", "편집 모드에서 도구 표시")
 for k, _ in S.TOOLS:
     app.pick_tool(k)
     pump(0.05)
+app.pick_tool("shape")
+shot("3_edit_mode_shape_tool")
 app.pick_tool("edit")
 
 step("글자 수정 (한글)")
@@ -253,6 +274,9 @@ app.dirty = False
 step("탭 / 새 파일 / 최근 파일")
 app.open_file(pdf2)
 pump(0.3)
+app.view_var.set(S.VIEW_LABEL["cont2"])
+app.on_view()
+shot("4_two_tabs_2pages")
 check(len(app.tabs) == 2, "탭 2개")
 app.open_file(pdf1)
 check(len(app.tabs) == 2 and app.path == os.path.abspath(pdf1), "이미 열린 파일은 그 탭으로")
