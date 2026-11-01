@@ -362,6 +362,13 @@ txt0 = pg0.get_text()
 del pg0
 check(len(ft) == 1 and "본문에 보이는 메모" in ft[0][2], f"글상자 메모 {ft}")
 check("본문에 보이는 메모" in txt0, "본문 글자로 들어감 (검색 가능)")
+pg0 = app.doc[0]
+subj = [a.info.get("subject", "") for a in pg0.annots(types=[fitz.PDF_ANNOT_FREE_TEXT])]
+del pg0
+anc = S.parse_anchor(subj[0]) if subj else None
+want = app.canvas_to_page(0, sx0 + 60, sy0 + 300)
+check(anc is not None and abs(anc.x - want.x) < 1 and abs(anc.y - want.y) < 1, f"원래 위치 기록 {subj}")
+check(len(app.cv.find_withtag("memolink0")) >= 2, "원래 위치 점 + 연결선")
 shot("9_memo_box")
 if ft:
     xref, r0, _ = ft[0]
@@ -376,6 +383,12 @@ if ft:
     contents = [a.info.get("content") for a in pg0.annots(types=[fitz.PDF_ANNOT_FREE_TEXT])]
     del pg0
     check(contents == ["고친 메모 내용"], f"메모 고치기 {contents}")
+    pg0 = app.doc[0]
+    subj2 = [a.info.get("subject", "") for a in pg0.annots(types=[fitz.PDF_ANNOT_FREE_TEXT])]
+    del pg0
+    check(subj2 == subj, "옮기고 고쳐도 원래 위치 연결 유지")
+    check(len(app.cv.find_withtag("memolink0")) >= 2, "옮긴 뒤에도 연결선")
+    shot("9_memo_box_moved")
 app.page_no = 1          # 회전된 쪽
 sx1, sy1, _, _ = app.slots[1]
 app.memo_dialog = lambda initial="", existing=False: ("save", "회전된 쪽 메모")

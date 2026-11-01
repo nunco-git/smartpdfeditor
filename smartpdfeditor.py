@@ -196,7 +196,7 @@ HELP_TEXT = [
      "· 🖍 색칠: 글자를 클릭하거나 영역을 끌어서 형광펜 — [색상표 ▾]에서 24가지 색 또는 직접 고르기\n"
      "· ■ 감추기: 영역을 끌면 아래 내용을 지우고 검정/흰색으로 덮음 (개인정보 가리기)\n"
      "· ◻ 도형: 사각형·원·선·화살표를 끌어서 그리기 (Shift = 정사각형·정원)\n"
-     "· 💬 메모: 클릭한 곳에 노란 글상자로 붙음 (본문에 내용이 보임). 끌어서 옮기기 · 클릭해서 고치기\n"
+     "· 💬 메모: 클릭한 곳(주황 점)에 노란 글상자가 붙고 점선으로 이어짐. 상자를 끌어 옮겨도 연결 유지 · 클릭해서 고치기\n"
      "   [도구 → 메모]에서 '아이콘 + 오른쪽 쪽지' 방식으로 바꿀 수 있음\n"
      "· ⌫ 지우개: 색칠·도형·메모를 클릭해서 지우기\n"
      "· ✂ 캡쳐(Ctrl+Shift+C): 영역을 끌면 클립보드로 복사 → 한글·카톡 등에 Ctrl+V\n", ""),
@@ -232,6 +232,18 @@ MEMO_FILL = (1, 0.97, 0.77)        # 본문 메모 상자 바탕 (연한 노랑)
 MEMO_TEXT = (0.24, 0.16, 0.0)      # 본문 메모 글자 (진한 갈색)
 MEMO_FS = 10                       # 본문 메모 글자 크기(pt)
 MEMO_BOX_W = 180                   # 본문 메모 상자 폭(pt)
+ANCHOR_TAG = "memo-anchor:"        # 메모를 붙인 원래 위치를 주석의 subject 에 기록
+
+
+def parse_anchor(subject):
+    """'memo-anchor:x,y' → fitz.Point (없으면 None)"""
+    if subject and subject.startswith(ANCHOR_TAG):
+        try:
+            x, y = (float(v) for v in subject[len(ANCHOR_TAG):].split(","))
+            return fitz.Point(x, y)
+        except ValueError:
+            return None
+    return None
 MARGIN = 12      # 화면 가장자리 여백(px)
 GAP = 12         # 쪽 사이 간격(px)
 VIEWS = [("single", "한 쪽씩", 1), ("cont", "연속 스크롤", 1), ("cont2", "2쪽씩 나란히", 2),
@@ -3289,6 +3301,7 @@ class App:
             self.cv.delete(f"memo{p}")
             if p in self._memo_pages:
                 self.draw_memos(p)
+            self.draw_links(p)
         self.cv.delete("hl")
         self.draw_selection()
 
@@ -3322,6 +3335,7 @@ class App:
             if p not in want:
                 self.cv.delete(f"img{p}")
                 self.cv.delete(f"memo{p}")
+                self.cv.delete(f"memolink{p}")
                 del self.imgs[p]
         for p in want:
             if p in self.imgs:
@@ -3336,6 +3350,7 @@ class App:
             self.cv.create_image(x, y, image=img, anchor="nw", tags=("page", f"img{p}"))
             if p in self._memo_pages:
                 self.draw_memos(p)
+            self.draw_links(p)
         for tag in ("tsel", "hl"):
             if self.cv.find_withtag(tag):
                 self.cv.tag_raise(tag)
@@ -3402,7 +3417,8 @@ class App:
             lst = []
             with unrotated(page):
                 for a in page.annots() or []:
-                    lst.append((fitz.Rect(a.rect), a.type[0], a.info.get("content", ""), a.xref))
+                    lst.append((fitz.Rect(a.rect), a.type[0], a.info.get("content", ""), a.xref,
+                                parse_anchor(a.info.get("subject", ""))))
             self.annot_cache[p] = lst
         return self.annot_cache[p]
 
@@ -3483,9 +3499,9 @@ class App:
 
     def annot_at(self, p, pt):
         found = None
-        for rect, typ, content, _x in self.annots_for(p):
+        for rect, typ, content, _x, _a in self.annots_for(p):
             if pt in rect:
-                found = (rect, typ, content, _x)
+                found = (rect, typ, content, _x, _a)
         return found
 
     def on_root_resize(self, e=None):
@@ -3625,7 +3641,7 @@ class App:
         if p is not None and self.mode.get() in ("memo", "edit"):
             an = self.annot_at(p, self.canvas_to_page(p, cx, cy))
             if an and an[1] == fitz.PDF_ANNOT_FREE_TEXT:     # 본문 메모를 잡음
-                self.memo_drag = [p, an[0], an[3], cx, cy, False]
+                self.memo_drag = [p, an[0], an[3], cx, cy, False, an[4]]
                 self.press = None
                 return
         self.press = (cx, cy, p) if p is not None else None
@@ -3654,7 +3670,7 @@ class App:
             self.pan_move(e)
             return
         if self.memo_drag:
-            p, rect, xref, sx, sy, _ = self.memo_drag
+            p, rect, xref, sx, sy, _, anchor = self.memo_drag
             cx, cy = self.cv.canvasx(e.x), self.cv.canvasy(e.y)
             if abs(cx - sx) + abs(cy - sy) > 4:
                 self.memo_drag[5] = True
@@ -3663,6 +3679,8 @@ class App:
                 self.cv.delete("sel")
                 self.cv.create_rectangle(x0 + dx, y0 + dy, x1 + dx, y1 + dy, outline="#f6a53f", width=2,
                                          dash=(5, 3), fill="#fff6c8", stipple="gray50", tags="sel")
+                if anchor is not None:      # 원래 위치와 연결선 미리 보기
+                    self.draw_link_line(p, anchor, (x0 + dx, y0 + dy, x1 + dx, y1 + dy), tags="sel")
             return
         if self.selecting:
             p, a, _ = self.selecting
@@ -3712,7 +3730,7 @@ class App:
             self.pan_end(e)
             return
         if self.memo_drag:
-            p, rect, xref, sx, sy, moved = self.memo_drag
+            p, rect, xref, sx, sy, moved, _anchor = self.memo_drag
             self.memo_drag = None
             self.cv.delete("sel")
             self.page_no = p
@@ -3798,7 +3816,7 @@ class App:
         """p쪽 메모를 쪽 오른쪽 칸에 노란 쪽지로 표시 (메모 아이콘과 점선으로 연결)"""
         self.cv.delete(f"memo{p}")
         x, y, w, h = self.slots[p]
-        notes = [(r, c) for r, t, c, _x in self.annots_for(p) if t == fitz.PDF_ANNOT_TEXT]
+        notes = [(r, c) for r, t, c, _x, _a in self.annots_for(p) if t == fitz.PDF_ANNOT_TEXT]
         notes.sort(key=lambda n: (n[0].y0, n[0].x0))
         fam = self.theme.get("font_family") or "맑은 고딕"
         try:
@@ -4380,7 +4398,8 @@ class App:
         with unrotated(page):
             for a in page.annots(types=[fitz.PDF_ANNOT_TEXT, fitz.PDF_ANNOT_FREE_TEXT]) or []:
                 if pt in a.rect:
-                    hit = (a.xref, a.type[0], a.info.get("content", ""), fitz.Rect(a.rect))
+                    hit = (a.xref, a.type[0], a.info.get("content", ""), fitz.Rect(a.rect),
+                           parse_anchor(a.info.get("subject", "")))
         res = self.memo_dialog(hit[2] if hit else "", existing=hit is not None)
         if not res:
             return
@@ -4396,17 +4415,19 @@ class App:
                     page.delete_annot(page.load_annot(hit[0]))
                 msg = "메모를 지웠습니다."
             elif box:
-                if hit:            # 고치기: 같은 자리(왼쪽 위 기준)에 새 크기로 다시 만듦
+                if hit:            # 고치기: 같은 자리(왼쪽 위 기준)에 새 크기로, 원래 위치 연결은 그대로
                     x0, y0, _, _ = self.page_to_canvas_rect(p, hit[3])
+                    anchor = hit[4]
                     with unrotated(page):
                         page.delete_annot(page.load_annot(hit[0]))
-                else:
+                    self.create_memo_box(p, x0, y0, text, anchor, place_near=False)
+                else:              # 새 메모: 누른 곳 = 원래 위치(표시 점), 상자는 그 옆에
                     if cxy is None:
                         x0, y0, _, _ = self.page_to_canvas_rect(p, fitz.Rect(pt, pt))
                     else:
                         x0, y0 = cxy
-                self.create_memo_box(p, x0, y0, text)
-                msg = "메모를 붙였습니다. 메모를 끌어서 옮기거나 클릭해서 고칠 수 있습니다."
+                    self.create_memo_box(p, x0, y0, text, fitz.Point(pt))
+                msg = "메모를 붙였습니다. 상자를 끌어 옮겨도 원래 위치와 선으로 이어집니다. 클릭하면 고치기."
             else:
                 with unrotated(page):
                     if hit:
@@ -4442,13 +4463,21 @@ class App:
         dy = min(max(dy, sy - y0), sy + sh - y1)
         return dx, dy
 
-    def create_memo_box(self, p, cx, cy, text):
-        """화면 좌표 (cx, cy)를 왼쪽 위로 하는 본문 메모 글상자 (회전된 쪽에서도 화면 기준으로 가로 상자)"""
+    def create_memo_box(self, p, cx, cy, text, anchor=None, place_near=True):
+        """본문 메모 글상자 (회전된 쪽에서도 화면 기준으로 가로 상자)
+        place_near=True: (cx, cy)=원래 위치 → 상자는 그 오른쪽 위에 (모자라면 왼쪽)
+        anchor: 원래 위치(쪽 좌표) — 상자와 선으로 이어 표시"""
         page = self.doc[p]
         rot = page.rotation
         z = self.zoom
         w, h = MEMO_BOX_W * z, self.memo_box_height(text) * z
         sx, sy, sw, sh = self.slots[p]
+        if place_near:
+            gap = 26
+            bx = cx + gap
+            if bx + w > sx + sw:             # 오른쪽이 모자라면 왼쪽에
+                bx = cx - gap - w
+            cx, cy = bx, cy - h - gap / 2 if cy - h - gap / 2 >= sy else cy + gap / 2
         cx = min(max(cx, sx), sx + sw - w)
         cy = min(max(cy, sy), sy + sh - h)
         r = fitz.Rect(self.canvas_to_page(p, cx, cy), self.canvas_to_page(p, cx + w, cy + h)).normalize()
@@ -4456,8 +4485,34 @@ class App:
             an = page.add_freetext_annot(r, text, fontsize=MEMO_FS, text_color=MEMO_TEXT, fill_color=MEMO_FILL,
                                          rotate=rot)
             an.set_border(width=0.8)
-            an.set_info(title="메모")
+            info = {"title": "메모"}
+            if anchor is not None:
+                info["subject"] = f"{ANCHOR_TAG}{anchor.x:.2f},{anchor.y:.2f}"
+            an.set_info(**info)
             an.update()
+
+    def draw_link_line(self, p, anchor, box, tags):
+        """원래 위치(점) → 메모 상자 가장 가까운 테두리까지 점선"""
+        ax0, ay0, _, _ = self.page_to_canvas_rect(p, fitz.Rect(anchor, anchor))
+        x0, y0, x1, y1 = box
+        ex, ey = min(max(ax0, x0), x1), min(max(ay0, y0), y1)
+        if abs(ex - ax0) + abs(ey - ay0) > 3:
+            self.cv.create_line(ax0, ay0, ex, ey, fill="#f6a53f", width=2, dash=(5, 3), tags=tags)
+        r = 5
+        self.cv.create_oval(ax0 - r, ay0 - r, ax0 + r, ay0 + r, fill="#f6a53f", outline="#ffffff", width=2,
+                            tags=tags)
+
+    def draw_links(self, p):
+        """p쪽 본문 메모마다 원래 붙인 위치를 점으로 표시하고 상자와 이음"""
+        self.cv.delete(f"memolink{p}")
+        if p not in self.slots:
+            return
+        for rect, typ, content, xref, anchor in self.annots_for(p):
+            if typ == fitz.PDF_ANNOT_FREE_TEXT and anchor is not None:
+                self.draw_link_line(p, anchor, self.page_to_canvas_rect(p, rect), ("memolink", f"memolink{p}"))
+        for tag in ("tsel", "hl"):
+            if self.cv.find_withtag(tag):
+                self.cv.tag_raise(tag)
 
     def move_memo(self, p, xref, rect, dx, dy):
         x0, y0, x1, y1 = self.page_to_canvas_rect(p, rect)
