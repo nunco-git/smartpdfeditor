@@ -692,6 +692,11 @@ class Popup(tk.Toplevel):
             return
         self.update_idletasks()
         w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+        size = getattr(self, "size_hint", None)       # 크기를 정해 둔 창 (사용방법 등)
+        if size:
+            sw_, sh_ = self.winfo_screenwidth(), self.winfo_screenheight()
+            w, h = min(size[0], sw_ - 20), min(size[1], sh_ - 90)
+            self.geometry(f"{w}x{h}")
         try:   # geometry("600x620")처럼 크기를 정해 둔 창
             gw, gh = (int(v) for v in self.geometry().split("+")[0].split("x"))
             if gw > 1 and gh > 1:
@@ -2314,7 +2319,7 @@ class App:
         dlg = self._help = Popup(self.root)
         dlg.title(f"{APP} 사용방법")
         dlg.transient(self.root)
-        dlg.geometry("820x640")
+        dlg.size_hint = (860, 660)          # 화면보다 크면 화면에 맞춰 줄어듦
         dlg.minsize(560, 400)
         fam = self.theme.get("font_family") or "맑은 고딕"
         try:
@@ -2346,7 +2351,7 @@ class App:
         # 왼쪽 목차
         toc = tk.Listbox(body, activestyle="none", exportselection=False, bd=0, highlightthickness=0,
                          font=(fam, fs), bg="#faf7f2", fg="#3e2a00", selectbackground="#fcd9a6",
-                         selectforeground="#3e2a00", width=18)
+                         selectforeground="#3e2a00", width=24)
         for i, (title, icon, _) in enumerate(HELP_SECTIONS):
             toc.insert("end", f"  {i + 1:>2}.  {title}")
         body.add(toc, weight=0)

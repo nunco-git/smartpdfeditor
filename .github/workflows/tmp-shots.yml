@@ -19,3 +19,4 @@ jobs:
       - if: always()
         run: |
           python -c "import glob,io,base64;from PIL import Image;[print('IMG', p.split('\\')[-1], base64.b64encode((lambda b:(Image.open(p).convert('RGB').save(b,'JPEG',quality=88),b.getvalue())[1])(io.BytesIO())).decode()) for p in sorted(glob.glob('screenshots/10_*.png'))]"
+# r2
