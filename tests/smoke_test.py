@@ -423,6 +423,21 @@ fp.rename()
 S.ask_text = _ask
 check(any(n.get("name") == "바뀐 이름" for n in fp.data), "이름 바꾸기")
 check(hasattr(fp, "_context"), "오른쪽 클릭 메뉴")
+
+step("여러 개 선택해서 한꺼번에 삭제")
+fp.data[:] = [{"type": "file", "name": f"파일{i}", "path": pdf1} for i in range(4)] + \
+    [{"type": "folder", "name": "묶음", "children": [{"type": "file", "name": "안쪽", "path": pdf2}]}]
+fp.refresh()
+by = {v[0]["name"]: k for k, v in fp.map.items()}
+fp.tv.selection_set([by["파일0"], by["파일2"], by["묶음"], by["안쪽"]])
+check(len(fp.selected_all()) == 3, "폴더 안 항목은 폴더와 함께 (중복 제외)")
+fp.delete()
+names = [n["name"] for n in fp.data]
+check(names == ["파일1", "파일3"], f"여러 개 삭제 결과 {names}")
+fp.select_all()
+check(len(fp.tv.selection()) == 2, "Ctrl+A 전체 선택")
+fp.delete()
+check(fp.data == [], "전체 삭제")
 shot("8_favorites_x")
 
 step("폴더에서 PDF 찾기 (본문)")

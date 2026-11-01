@@ -206,6 +206,7 @@ HELP_TEXT = [
     ("■ 왼쪽 사이드바 (F9로 숨기기)", "h2"),
     ("· 즐겨찾기(Ctrl+D) · 북마크(Ctrl+B) — 글자를 선택하고 Ctrl+B 하면 묻지 않고 그 글자 이름으로 바로 추가\n"
      "· 폴더에서 PDF 찾기(Ctrl+Shift+F): 파일명·본문으로 찾기 → 결과를 즐겨찾기/북마크로 저장\n"
+     "· 즐겨찾기·북마크: 줄 끝 × 로 삭제, 오른쪽 클릭 메뉴(이름 바꾸기·삭제), Ctrl·Shift+클릭으로 여러 개 선택 후 Delete\n"
      "· 탭의 × 를 누르면 그 파일 닫기 (휠 버튼 클릭도 됨)\n", ""),
     ("■ 저장", "h2"),
     ("· Ctrl+S — 기본 이름은 '원본_수정.pdf' (원본은 그대로)\n"
@@ -312,8 +313,10 @@ class TreePanel(ttk.Frame):
         ttk.Button(bar, text=add_text, command=self.add).pack(side="left")
         ttk.Button(bar, text="새 폴더", command=self.new_folder).pack(side="left", padx=2)
         ttk.Button(bar, text="이름", width=4, command=self.rename).pack(side="left")
-        ttk.Button(bar, text="삭제", width=4, command=self.delete).pack(side="left", padx=2)
-        self.tv = ttk.Treeview(self, show="tree", selectmode="browse", columns=("x",))
+        db = ttk.Button(bar, text="삭제", width=4, command=self.delete)
+        db.pack(side="left", padx=2)
+        Tooltip(db, "선택한 항목 삭제 (Ctrl·Shift+클릭으로 여러 개 선택, Ctrl+A 전체 선택)")
+        self.tv = ttk.Treeview(self, show="tree", selectmode="extended", columns=("x",))
         self.tv.column("#0", stretch=True, width=180)
         self.tv.column("x", width=24, minwidth=24, stretch=False, anchor="center")   # 줄 끝 × (삭제)
         sb = ttk.Scrollbar(self, orient="vertical", command=self.tv.yview)
@@ -328,6 +331,8 @@ class TreePanel(ttk.Frame):
         self.tv.bind("<Motion>", self._hover)
         self.tv.bind("<Leave>", lambda e: self._hover(None))
         self.tv.bind("<Button-3>", self._context)
+        self.tv.bind("<Control-a>", self.select_all)
+        self.tv.bind("<<TreeviewSelect>>", self._sel_info)
         self.tv.bind("<Double-1>", self._dbl)
         self.tv.bind("<Return>", self._dbl)
         self.tv.bind("<Delete>", lambda e: self.delete())
@@ -368,6 +373,27 @@ class TreePanel(ttk.Frame):
         sel = self.tv.selection()
         return self.map.get(sel[0]) if sel else None
 
+    def selected_all(self):
+        """선택한 항목 전부 [(항목, 담긴 목록)] — 선택한 폴더 안에 든 항목은 폴더와 함께 지워지므로 뺌"""
+        picked = [self.map[i] for i in self.tv.selection() if i in self.map]
+        folders = [n for n, _ in picked if n.get("type") == "folder"]
+        return [(n, c) for n, c in picked if not any(f is not n and contains_node(f, n) for f in folders)]
+
+    def select_all(self, e=None):
+        def walk(parent):
+            for i in self.tv.get_children(parent):
+                yield i
+                yield from walk(i)
+        self.tv.selection_set(list(walk("")))
+        return "break"
+
+    def _sel_info(self, e=None):
+        n = len(self.tv.selection())
+        if n > 1:
+            app = getattr(self, "app", None)
+            if app:
+                app.status.set(f"{n}개 선택됨 — Delete 또는 [삭제]로 한꺼번에 지우기")
+
     def target_container(self):
         """선택한 폴더 안, 또는 선택 항목과 같은 폴더"""
         s = self.selected()
@@ -404,6 +430,23 @@ class TreePanel(ttk.Frame):
             self.changed(node)
 
     def delete(self, iid=None, ask=True):
+        if iid is None and len(self.tv.selection()) > 1:     # 여러 개 한꺼번에
+            items = self.selected_all()
+            if not items:
+                return
+            n_items = sum(count_items(n.get("children", [])) + (0 if n.get("type") == "folder" else 1)
+                          for n, _ in items)
+            n_folders = sum(1 for n, _ in items if n.get("type") == "folder")
+            what = f"항목 {n_items}개" + (f" (폴더 {n_folders}개 포함)" if n_folders else "")
+            if ask and not messagebox.askyesno(APP, f"선택한 {what}를 모두 삭제할까요?", parent=self):
+                return
+            for n, c in items:
+                remove_node(c, n)
+            self.changed()
+            app = getattr(self, "app", None)
+            if app:
+                app.status.set(f"{what}를 삭제했습니다.")
+            return
         s = self.map.get(iid) if iid else self.selected()
         if not s:
             return
@@ -437,6 +480,14 @@ class TreePanel(ttk.Frame):
         """오른쪽 클릭 메뉴: 열기 · 이름 바꾸기 · 삭제 · 새 폴더"""
         row = self.tv.identify_row(e.y)
         m = tk.Menu(self, tearoff=0)
+        many = row and row in self.tv.selection() and len(self.tv.selection()) > 1
+        if many:                        # 여러 개 선택한 채로 오른쪽 클릭
+            m.add_command(label=f"선택한 {len(self.tv.selection())}개 삭제", accelerator="Del", command=self.delete)
+            m.add_command(label="전체 선택", accelerator="Ctrl+A", command=self.select_all)
+            m.add_separator()
+            m.add_command(label="새 폴더", command=self.new_folder)
+            m.tk_popup(e.x_root, e.y_root)
+            return
         if row:
             self.tv.selection_set(row)
             self.tv.focus(row)
@@ -445,6 +496,7 @@ class TreePanel(ttk.Frame):
                 m.add_command(label="열기", command=lambda: self.on_activate(node))
             m.add_command(label="이름 바꾸기", accelerator="F2", command=self.rename)
             m.add_command(label="삭제", accelerator="Del", command=self.delete)
+            m.add_command(label="전체 선택", accelerator="Ctrl+A", command=self.select_all)
             m.add_separator()
             if node.get("type") != "folder" and node.get("path"):
                 m.add_command(label="파일 위치 열기", command=lambda: open_folder(node["path"]))
@@ -476,7 +528,8 @@ class TreePanel(ttk.Frame):
             self.drag = None
             return "break"
         self._xdown = None
-        self.drag = (iid, e.y, False) if iid else None
+        multi_key = e.state & 0x5 if hasattr(e, "state") else 0     # Ctrl·Shift 누른 채 클릭 = 여러 개 선택
+        self.drag = (iid, e.y, False) if iid and not multi_key else None
 
     def _motion(self, e):
         if self.drag and abs(e.y - self.drag[1]) > 6:
@@ -1856,6 +1909,7 @@ class App:
                                    lambda n: "📄 " + n.get("name", ""), self.persist, "＋ 현재 파일")
         self.bm_panel = TreePanel(self.side, self.conf["bookmarks"], self.new_bookmark, self.open_bookmark,
                                   lambda n: f"🔖 {n.get('name', '')}", self.persist, "＋ 북마크 추가")
+        self.fav_panel.app = self.bm_panel.app = self
         self.side.add(self.fav_panel, text="즐겨찾기")
         self.side.add(self.bm_panel, text="북마크")
         self.recent_panel = RecentPanel(self.side, self)
