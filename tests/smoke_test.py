@@ -105,7 +105,7 @@ root.report_callback_exception = lambda et, ev, tb: errors.append(
 
 step("프로그램 시작 + 파일 열기")
 app = S.App(root, [pdf1], listen=False)
-root.geometry("1280x860+0+0")
+root.geometry("1000x690+0+0")
 root.deiconify()
 root.lift()
 pump(1.0)

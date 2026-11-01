@@ -1164,7 +1164,15 @@ class App:
         self.conf = load_conf()
         pr = self.conf["prefs"]
         try:
-            root.geometry(pr.get("geometry", "1280x860"))
+            g = pr.get("geometry", "1280x860")
+            sw, sh = root.winfo_screenwidth(), root.winfo_screenheight() - 60
+            try:   # 화면보다 크면 화면에 맞춤 (아래 상태줄이 가려지지 않게)
+                gw, gh = (int(v) for v in g.split("+")[0].split("x"))
+            except ValueError:
+                gw, gh = 1280, 860
+            if gw > sw or gh > sh:
+                g = f"{min(gw, sw)}x{min(gh, sh)}+0+0"
+            root.geometry(g)
         except tk.TclError:
             root.geometry("1200x820")
         self.doc = None
@@ -1355,6 +1363,8 @@ class App:
         self._build_menu()
         bar = ttk.Frame(self.root, padding=(4, 3))
         bar.pack(fill="x")
+        right = ttk.Frame(bar)          # 오른쪽 묶음을 먼저 배치 → 창이 좁아도 항상 보임
+        right.pack(side="right")
 
         def btn(text, cmd, tip, width=None):
             b_ = ttk.Button(bar, text=text, command=cmd, width=width)
@@ -1395,11 +1405,15 @@ class App:
         tips = {"edit": "글자 수정 — 글자를 클릭 (Esc)", "mark": "색칠 — 글자 클릭 또는 영역 끌기",
                 "hide": "감추기 — 아래 내용을 지우고 덮기", "shape": "도형 — 사각형·원·선·화살표 (Shift: 정사각형·정원)",
                 "memo": "메모 붙이기", "erase": "색칠·도형·메모 지우기", "capture": "영역 캡쳐 → 클립보드 (Ctrl+Shift+C)"}
+        self.tool_rbs = {}
+        self.tool_short = short
+        self._compact = None
         for k, _ in TOOLS:
             rb = ttk.Radiobutton(self.toolbtns, text=short[k], value=k, variable=self.mode, style="Toolbutton",
                                  command=self.on_mode)
             rb.pack(side="left", padx=0)
             Tooltip(rb, tips[k])
+            self.tool_rbs[k] = rb
         self.optbox = ttk.Frame(self.toolarea)
         self.opt = {k: ttk.Frame(self.optbox) for k, _ in TOOLS}
 
@@ -1449,21 +1463,23 @@ class App:
         # 우측: 로고(→ smartgong.kr) · 사용방법 · 뷰어/편집 모드
         try:
             self.logo_img = tk.PhotoImage(data="".join(LOGO_PNG))
-            logo = tk.Label(bar, image=self.logo_img, cursor="hand2", bd=0)
+            logo = tk.Label(right, image=self.logo_img, cursor="hand2", bd=0)
         except tk.TclError:
-            logo = tk.Label(bar, text="스마트공", fg="#2e7d32", font=("맑은 고딕", 12, "bold"), cursor="hand2")
+            logo = tk.Label(right, text="스마트공", fg="#2e7d32", font=("맑은 고딕", 12, "bold"), cursor="hand2")
         logo.pack(side="right", padx=(4, 2))
         logo.bind("<Button-1>", lambda e: webbrowser.open(HOME_URL))
         Tooltip(logo, "smartgong.kr 바로가기")
-        hl = tk.Label(bar, text="사용방법", fg="#1565c0", cursor="hand2", font=("맑은 고딕", 9, "underline"))
+        hl = tk.Label(right, text="사용방법", fg="#1565c0", cursor="hand2", font=("맑은 고딕", 9, "underline"))
         hl.pack(side="right", padx=(6, 4))
         hl.bind("<Button-1>", lambda e: self.show_help())
         for val, txt, tip in (("edit", "✎ 편집", "편집 모드: 글자 수정·색칠·도형 등 (F4)"),
-                              ("view", "👁 뷰어", "뷰어 모드: 보기 전용, 끌어서 이동 (F4)")):
-            rb = ttk.Radiobutton(bar, text=txt, value=val, variable=self.app_mode, style="Toolbutton",
+                              ("view", "👁 뷰어", "뷰어 모드: 보기 전용, 끌어서 글자 선택 (F4)")):
+            rb = ttk.Radiobutton(right, text=txt, value=val, variable=self.app_mode, style="Toolbutton",
                                  command=self.set_app_mode)
             rb.pack(side="right", padx=1)
             Tooltip(rb, tip)
+
+        self.root.bind("<Configure>", self.on_root_resize, add="+")
 
         self.pw = ttk.PanedWindow(self.root, orient="horizontal")
         self.pw.pack(fill="both", expand=True)
@@ -2544,6 +2560,16 @@ class App:
             if pt in rect:
                 found = (rect, typ, content)
         return found
+
+    def on_root_resize(self, e=None):
+        """창이 좁으면 도구 버튼을 아이콘만 표시"""
+        if e is not None and e.widget is not self.root:
+            return
+        compact = self.root.winfo_width() < 1250
+        if compact != self._compact:
+            self._compact = compact
+            for k, rb in self.tool_rbs.items():
+                rb.config(text=self.tool_short[k][:1] if compact else self.tool_short[k], width=2 if compact else 0)
 
     def pick_tool(self, tool):
         self.mode.set(tool)
