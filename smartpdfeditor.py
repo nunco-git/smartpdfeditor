@@ -112,7 +112,7 @@ def stats_call(url, method, body):
         r.read()
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.2"
+APP_VER = "1.0.3"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
