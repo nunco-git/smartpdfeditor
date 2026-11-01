@@ -112,6 +112,7 @@ pump(1.0)
 check(len(app.tabs) == 1, "탭 1개")
 check(app.doc is not None and len(app.doc) == 3, "3쪽 문서")
 check(len(app.imgs) > 0, "화면에 쪽이 그려짐")
+check(len(getattr(app, "_app_icons", [])) == 4, "프로그램 아이콘(제목줄·작업표시줄)")
 
 step("메뉴와 도구가 한 줄 · 쪽 이동/확대는 아래 상태줄")
 labels = [l_.cget("text") for l_, _ in app.menubar.items]

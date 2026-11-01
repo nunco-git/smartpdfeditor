@@ -34,10 +34,14 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python tests/smoke_test.py
 
+      - name: 버전 정보 만들기
+        run: python tools/make_version_info.py
+
       - name: exe 만들기
         run: >
           python -m PyInstaller --noconfirm --clean --onefile --windowed
-          --name smartpdfeditor --collect-all pymupdf smartpdfeditor.py
+          --name smartpdfeditor --icon smartpdfeditor.ico --version-file version_info.txt
+          --collect-all pymupdf smartpdfeditor.py
 
       - name: exe 점검
         shell: pwsh

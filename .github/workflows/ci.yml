@@ -39,10 +39,14 @@ jobs:
           path: screenshots/
           retention-days: 14
 
+      - name: 버전 정보 만들기
+        run: python tools/make_version_info.py
+
       - name: exe 만들기
         run: >
           python -m PyInstaller --noconfirm --clean --onefile --windowed
-          --name smartpdfeditor --collect-all pymupdf smartpdfeditor.py
+          --name smartpdfeditor --icon smartpdfeditor.ico --version-file version_info.txt
+          --collect-all pymupdf smartpdfeditor.py
 
       - name: exe 점검 (PDF 엔진 포함 여부)
         shell: pwsh
@@ -50,6 +54,9 @@ jobs:
           $p = Start-Process -FilePath dist\smartpdfeditor.exe -ArgumentList "--selftest" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "selftest 실패: 종료코드 $($p.ExitCode)" }
           "selftest OK ($((Get-Item dist\smartpdfeditor.exe).Length / 1MB) MB)"
+          $v = (Get-Item dist\smartpdfeditor.exe).VersionInfo
+          "이름: $($v.FileDescription)  ·  버전: $($v.ProductVersion)  ·  만든 곳: $($v.CompanyName)"
+          if ($v.FileDescription -ne "스마트PDF Editor") { throw "exe 이름 정보가 없습니다" }
 
       - uses: actions/upload-artifact@v4
         with:

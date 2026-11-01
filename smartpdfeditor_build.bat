@@ -90,13 +90,19 @@ echo.
 
 rem ---- 아이콘 (같은 폴더에 app.ico 가 있으면 사용) ----
 set "ICON="
-if exist "app.ico" set "ICON=--icon app.ico"
+if exist "smartpdfeditor.ico" set "ICON=--icon smartpdfeditor.ico"
+rem 탐색기 파일 속성·'연결 프로그램' 목록에 보일 이름과 버전 (스마트PDF Editor 1.0.0)
+set "VERF="
+if exist "tools\make_version_info.py" (
+    %PY% tools\make_version_info.py >nul 2>&1
+    if exist "version_info.txt" set "VERF=--version-file version_info.txt"
+)
 
 rem ---- 실행파일 만들기 ----
 echo [3/4] 실행파일 만드는 중... (1~3분 걸립니다)
 if exist "smartpdfeditor.exe" del /q "smartpdfeditor.exe" >nul 2>&1
 %PY% -m PyInstaller --noconfirm --clean --onefile --windowed ^
-    --name smartpdfeditor %ICON% ^
+    --name smartpdfeditor %ICON% %VERF% ^
     --collect-all pymupdf ^
     smartpdfeditor.py
 if errorlevel 1 (
