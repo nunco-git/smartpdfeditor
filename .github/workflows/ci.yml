@@ -1,0 +1,49 @@
+name: 점검 및 exe 빌드
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 필요한 프로그램 설치
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --only-binary=:all: -r requirements.txt
+
+      - name: 기능 점검 (실제 화면으로 자동 테스트)
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python tests/smoke_test.py
+
+      - name: exe 만들기
+        run: >
+          python -m PyInstaller --noconfirm --clean --onefile --windowed
+          --name smartpdfeditor --collect-all pymupdf smartpdfeditor.py
+
+      - name: exe 점검 (PDF 엔진 포함 여부)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\smartpdfeditor.exe -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "selftest 실패: 종료코드 $($p.ExitCode)" }
+          "selftest OK ($((Get-Item dist\smartpdfeditor.exe).Length / 1MB) MB)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smartpdfeditor-exe
+          path: dist/smartpdfeditor.exe
+          retention-days: 14

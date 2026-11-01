@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+*.exe
+설치오류_기록.txt
+ad.png
+ad.gif
+ad.jpg
+ad.jpeg
+ad.txt
