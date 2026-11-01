@@ -679,6 +679,16 @@ check(len(app.ad_list) == 1, "깨진 그림·지난 광고 제외")
 app.apply_ads({"interval": 5, "ads": []})
 check(int(app.ad_frame.cget("height")) <= 1, "광고 없으면 최소화")
 
+step("한글 입력 창 글꼴 맞추기")
+probe = S.ttk.Entry(root, font=("맑은 고딕", 11))
+probe.pack()
+probe.focus_force()
+pump(0.4)
+res = S.ime_match_font(probe)
+print("     IME 조합 창:", res if res else "IME 없음(영문 Windows) — 오류 없이 넘어감", flush=True)
+check(res is None or res[1] > 8, "조합 창 글꼴 크기")
+probe.destroy()
+
 step("사용 통계")
 def wait_for(cond, sec=5):
     end = time.time() + sec

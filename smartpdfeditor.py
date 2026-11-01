@@ -872,6 +872,84 @@ def ask_text(parent, title, prompt, initial=""):
     return res["v"]
 
 
+# ───────────────────────── 한글 입력(IME) ─────────────────────────
+_ime = {}
+
+def _ime_api():
+    if "imm" not in _ime:
+        import ctypes
+        from ctypes import wintypes
+
+        class LOGFONTW(ctypes.Structure):
+            _fields_ = [("lfHeight", wintypes.LONG), ("lfWidth", wintypes.LONG),
+                        ("lfEscapement", wintypes.LONG), ("lfOrientation", wintypes.LONG),
+                        ("lfWeight", wintypes.LONG), ("lfItalic", wintypes.BYTE),
+                        ("lfUnderline", wintypes.BYTE), ("lfStrikeOut", wintypes.BYTE),
+                        ("lfCharSet", wintypes.BYTE), ("lfOutPrecision", wintypes.BYTE),
+                        ("lfClipPrecision", wintypes.BYTE), ("lfQuality", wintypes.BYTE),
+                        ("lfPitchAndFamily", wintypes.BYTE), ("lfFaceName", ctypes.c_wchar * 32)]
+        u32, imm = ctypes.windll.user32, ctypes.windll.imm32
+        u32.GetFocus.restype = ctypes.c_void_p
+        imm.ImmGetContext.restype = ctypes.c_void_p
+        imm.ImmGetContext.argtypes = [ctypes.c_void_p]
+        imm.ImmReleaseContext.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        imm.ImmSetCompositionFontW.argtypes = [ctypes.c_void_p, ctypes.POINTER(LOGFONTW)]
+        imm.ImmGetCompositionFontW.argtypes = [ctypes.c_void_p, ctypes.POINTER(LOGFONTW)]
+        _ime.update(imm=imm, u32=u32, LOGFONTW=LOGFONTW, ctypes=ctypes)
+    return _ime
+
+
+def ime_match_font(widget):
+    """한글을 조합하는 동안 뜨는 작은 입력 창(IME 조합 창)의 글꼴·크기를 입력칸과 똑같이 맞춤.
+    맞추지 않으면 Windows 기본 글꼴로 크게 보였다가 글자가 완성되면 칸으로 옮겨져 어색하게 보임.
+    성공하면 맞춘 (글꼴, 픽셀 높이), 아니면 None"""
+    if sys.platform != "win32":
+        return None
+    try:
+        api = _ime_api()
+        hwnd = api["u32"].GetFocus()
+        if not hwnd:
+            return None
+        try:
+            spec = widget.cget("font")
+        except tk.TclError:
+            spec = ""
+        f = tkfont.Font(root=widget, font=spec or "TkTextFont")
+        act = f.actual()
+        size = act["size"]
+        px = -size if size < 0 else max(8, round(size * widget.winfo_fpixels("1i") / 72))
+        himc = api["imm"].ImmGetContext(hwnd)
+        if not himc:
+            return None
+        try:
+            lf = api["LOGFONTW"]()
+            lf.lfHeight = -px
+            lf.lfWeight = 700 if act.get("weight") == "bold" else 400
+            lf.lfCharSet = 129                      # HANGUL_CHARSET
+            lf.lfQuality = 5                        # CLEARTYPE_QUALITY
+            lf.lfFaceName = act["family"][:31]
+            api["imm"].ImmSetCompositionFontW(himc, api["ctypes"].byref(lf))
+        finally:
+            api["imm"].ImmReleaseContext(hwnd, himc)
+        return act["family"], px
+    except Exception:
+        return None
+
+
+def install_ime_fix(root):
+    """모든 입력칸에서 포커스를 받을 때 IME 조합 창 글꼴을 맞춤"""
+    if sys.platform != "win32":
+        return
+    def on_focus(e):
+        w = e.widget
+        try:
+            w.after_idle(lambda: ime_match_font(w))
+        except tk.TclError:
+            pass
+    for cls in ("TEntry", "Entry", "Text", "TSpinbox", "TCombobox", "Spinbox"):
+        root.bind_class(cls, "<FocusIn>", on_focus, add="+")
+
+
 # ───────────────────────── 글꼴 ─────────────────────────
 _font_cache = {}
 
@@ -2104,6 +2182,7 @@ class App:
         self.selecting = None
 
         self.set_app_icon()
+        install_ime_fix(self.root)
         self._build_ui()
         for f in files:
             self.open_file(f)
