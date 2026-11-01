@@ -1940,11 +1940,16 @@ class App:
         self.menubar.pack(side="left")
         self._build_menu()
 
+        self.labeled = []               # 좁으면 아이콘만 보이게 줄일 버튼들
+        self._compact = False
+
         def btn(icon, cmd, tip, text=None):
             b_ = ttk.Button(bar, command=cmd, text=text or "", compound="left" if text else "image", width=-1)
             self.set_icon(b_, icon, "top")
             b_.pack(side="left", padx=1)
             Tooltip(b_, tip)
+            if text:
+                self.labeled.append(b_)
             return b_
 
         def sep():
@@ -1979,6 +1984,7 @@ class App:
             rb.pack(side="left", padx=0)
             Tooltip(rb, tips[k])
             self.tool_rbs[k] = rb
+            self.labeled.append(rb)
         self.optbox = ttk.Frame(self.toolarea)
         self.opt = {k: ttk.Frame(self.optbox) for k, _ in TOOLS}
 
@@ -2072,6 +2078,7 @@ class App:
             rb = ttk.Radiobutton(right, text=txt, value=val, variable=self.app_mode, style="Toolbutton",
                                  compound="left", command=self.set_app_mode)
             self.set_icon(rb, ic, "top")
+            self.labeled.append(rb)
             rb.pack(side="right", padx=1)
             Tooltip(rb, tip)
 
@@ -3748,25 +3755,48 @@ class App:
             self.root.after_cancel(self._fit_job)
         self._fit_job = self.root.after(120, self.fit_toolbar)
 
+    def set_compact(self, on):
+        """좁은 창: 버튼 글자를 숨기고 아이콘만 (이름은 말풍선으로)"""
+        if on == self._compact:
+            return
+        self._compact = on
+        for w in self.labeled:
+            try:
+                w.configure(compound="image" if on else "left")
+            except tk.TclError:
+                pass
+
     def fit_toolbar(self):
-        """도구줄이 창 폭에 다 안 들어가면 도구 버튼을 둘째 줄로 (잘려서 안 보이는 일 없게)"""
+        """한 줄에 다 들어가게: ① 글자+아이콘 한 줄 → ② 아이콘만 한 줄 → ③ 도구 버튼을 둘째 줄로"""
         self._fit_job = None
-        self.root.update_idletasks()
         W = self.root.winfo_width()
         if W < 100:
             return
-        try:
-            in_bar = str(self.toolarea.pack_info().get("in")) == str(self.bar)
-        except tk.TclError:
-            in_bar = False
-        others = self.bar.winfo_reqwidth() - (self.toolarea.winfo_reqwidth() if in_bar else 0)
-        widest_opt = max((f.winfo_reqwidth() for f in self.opt.values()), default=0)
-        need = others + self.toolbtns.winfo_reqwidth() + widest_opt + 24
-        if need > W and in_bar:
+
+        def need():
+            self.root.update_idletasks()
+            try:
+                in_bar = str(self.toolarea.pack_info().get("in")) == str(self.bar)
+            except tk.TclError:
+                in_bar = False
+            others = self.bar.winfo_reqwidth() - (self.toolarea.winfo_reqwidth() if in_bar else 0)
+            widest_opt = max((f.winfo_reqwidth() for f in self.opt.values()), default=0)
+            return others + self.toolbtns.winfo_reqwidth() + widest_opt + 24, in_bar
+
+        self.set_compact(False)
+        n, in_bar = need()
+        one_row = n <= W
+        if not one_row:
+            self.set_compact(True)
+            n, in_bar = need()
+            one_row = n <= W
+            if not one_row:
+                self.set_compact(False)      # 두 줄일 때는 자리가 넉넉하니 글자도 보이게
+        if not one_row and in_bar:
             self.toolarea.pack_forget()
             self.bar2.pack(fill="x")
             self.toolarea.pack(in_=self.bar2, side="left")
-        elif need <= W and not in_bar:
+        elif one_row and not in_bar:
             self.toolarea.pack_forget()
             self.bar2.pack_forget()
             self.toolarea.pack(in_=self.bar, side="left", padx=(6, 0))
