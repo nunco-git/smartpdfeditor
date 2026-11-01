@@ -47,8 +47,13 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, colorchooser
 
 try:
-    import fitz  # PyMuPDF
+    import pymupdf as fitz  # PyMuPDF (새 이름)
 except ImportError:
+    try:
+        import fitz  # PyMuPDF (예전 이름)
+    except ImportError:
+        fitz = None
+if fitz is None:
     r = tk.Tk(); r.withdraw()
     messagebox.showerror("스마트PDF Editor", "PyMuPDF가 필요합니다.\n\n명령 프롬프트에서:\npip install pymupdf")
     sys.exit(1)

@@ -15,7 +15,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.argv = [sys.argv[0]]
 
-import fitz  # noqa: E402
+try:
+    import pymupdf as fitz  # noqa: E402
+except ImportError:
+    import fitz  # noqa: E402
 import smartpdfeditor as S  # noqa: E402
 
 TMP = tempfile.mkdtemp(prefix="spe_")
@@ -194,8 +197,9 @@ second = next(i for i in app.items_for(0) if "Second" in i["text"])
 print("   - 감추기", flush=True)
 app.do_area("hide", second["rect"])
 check("Second" not in app.doc[0].get_text(), "감추기 = 실제 삭제")
-a0 = list(app.doc[0].annots())[0]
-c = a0.rect
+pg0 = app.doc[0]                      # 주석을 읽는 동안 쪽 객체를 붙잡아 둠 (PyMuPDF 규칙)
+c = fitz.Rect(next(pg0.annots()).rect)
+del pg0
 app.page_no = 0
 print("   - 지우개", flush=True)
 app.erase_at(fitz.Point((c.x0 + c.x1) / 2, (c.y0 + c.y1) / 2))
