@@ -18,3 +18,4 @@ jobs:
         run: python tests/tmp_freetext.py
 # r2
 # r3
+# r4
