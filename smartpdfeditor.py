@@ -45,6 +45,7 @@ import queue
 import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, colorchooser
+from tkinter import font as tkfont
 
 try:
     import pymupdf as fitz  # PyMuPDF (새 이름)
@@ -75,6 +76,21 @@ if not os.path.exists(CONF_FILE) and os.path.exists(_OLD_CONF):
     except OSError:
         pass
 APP_DIR = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
+# 화면 테마. "clip" = 스마트클립 아이콘 색(주황 #F6A53F · 갈색 #5C3D00 · 크림)
+THEMES = {
+    "clip":  {"name": "스마트클립 (주황)", "bg": "#fff6e8", "fg": "#3e2a00", "accent": "#f6a53f",
+              "field": "#fffdf9", "canvas": "#ead7b8", "shadow": "#c7a77a", "link": "#b4610a"},
+    "gray":  {"name": "기본 (회색)", "bg": "", "fg": "", "accent": "", "field": "",
+              "canvas": "#5a5a5a", "shadow": "#3c3c3c", "link": "#1565c0"},
+    "light": {"name": "밝게", "bg": "#f7f9fc", "fg": "#1f2933", "accent": "#7fb2f0",
+              "field": "#ffffff", "canvas": "#dfe5ec", "shadow": "#b8c2cc", "link": "#1565c0"},
+    "dark":  {"name": "어둡게", "bg": "#2b2b2e", "fg": "#e8e8e8", "accent": "#c9822b",
+              "field": "#3a3a3e", "canvas": "#1e1e20", "shadow": "#000000", "link": "#f6a53f"},
+}
+THEME_DEFAULT = {"preset": "clip", "font_family": "맑은 고딕", "font_size": 9, "fg": "", "bg": "", "accent": "",
+                 "canvas": "", "wall": ""}
+FONT_FIRST = ("맑은 고딕", "Malgun Gothic", "나눔고딕", "NanumGothic", "나눔바른고딕", "굴림", "Gulim", "돋움",
+              "Dotum", "바탕", "Batang", "Segoe UI", "Arial", "Tahoma")
 AD_W, AD_H = 250, 250     # 광고창 기본 크기 (사이드바 폭에 맞춘 정사각형 배너)
 AD_FILES = ("ad.png", "ad.gif", "ad.jpg", "ad.jpeg")   # 실행파일 옆에 두면 이 광고가 우선 (시험용)
 AD_LINK_FILE = "ad.txt"   # 첫 줄 = 광고 클릭 시 열 주소
@@ -192,6 +208,9 @@ HELP_TEXT = [
     ("· Ctrl+S — 기본 이름은 '원본_수정.pdf' (원본은 그대로)\n"
      "· Ctrl+Z 되돌리기 (최근 30번)\n"
      "· [설정] → 설정 내보내기/가져오기로 즐겨찾기·북마크를 다른 PC로 옮기기\n", ""),
+    ("■ 화면 꾸미기", "h2"),
+    ("· [설정 → 테마]: 스마트클립(주황) · 기본(회색) · 밝게 · 어둡게\n"
+     "· [설정 → 환경설정 → 화면 꾸미기]: 글꼴·글자 크기·글자 색·바탕 색·강조 색·문서 배경 색·배경 그림\n", ""),
     ("더 많은 업무 도구는 smartgong.kr 에서 만나보세요.\n"
      "이 프로그램은 AGPL-3.0 오픈소스입니다 · 소스: github.com/nunco-git/smartpdfeditor", "foot"),
 ]
@@ -1215,6 +1234,12 @@ class App:
         self.wheel_page = tk.BooleanVar(value=pr.get("wheel_page", False))  # 휠 한 칸 = 한 쪽
         self.panning = False
         self._wheel_t = 0
+        self.theme = dict(THEME_DEFAULT, **(pr.get("theme") or {}))
+        self.themed_labels = []  # 테마 색을 따라야 하는 tk 라벨들
+        self._wall_src = None    # 배경 그림 원본
+        self._wall_key = None
+        self._wall_img = None
+        self._last_tool = "edit"
         self.sel = None          # 선택한 글자 {"page", "text", "rects", "y"}
         self.selecting = None
 
@@ -1222,6 +1247,7 @@ class App:
         for f in files:
             self.open_file(f)
         self.on_mode(quiet=True)
+        self.apply_theme()
         self.set_app_mode()
         self.root.after(200, self.poll_ipc)
 
@@ -1340,6 +1366,12 @@ class App:
 
         sm = tk.Menu(mb, tearoff=0)
         sm.add_command(label="환경설정...", command=self.settings_dialog)
+        thm = tk.Menu(sm, tearoff=0)
+        self.theme_var = tk.StringVar()
+        for k, v in THEMES.items():
+            thm.add_radiobutton(label=v["name"], value=k, variable=self.theme_var,
+                                command=lambda k=k: self.set_preset(k))
+        sm.add_cascade(label="테마", menu=thm)
         sm.add_separator()
         sm.add_command(label="탐색기에서 PDF를 열면:", state="disabled")
         sm.add_radiobutton(label="    이 창의 새 탭으로 열기", value="tab", variable=self.ext_open, command=self.on_ext_open)
@@ -1467,10 +1499,12 @@ class App:
         except tk.TclError:
             logo = tk.Label(right, text="스마트공", fg="#2e7d32", font=("맑은 고딕", 12, "bold"), cursor="hand2")
         logo.pack(side="right", padx=(4, 2))
+        self.themed_labels.append((logo, False))
         logo.bind("<Button-1>", lambda e: webbrowser.open(HOME_URL))
         Tooltip(logo, "smartgong.kr 바로가기")
         hl = tk.Label(right, text="사용방법", fg="#1565c0", cursor="hand2", font=("맑은 고딕", 9, "underline"))
         hl.pack(side="right", padx=(6, 4))
+        self.themed_labels.append((hl, True))
         hl.bind("<Button-1>", lambda e: self.show_help())
         for val, txt, tip in (("edit", "✎ 편집", "편집 모드: 글자 수정·색칠·도형 등 (F4)"),
                               ("view", "👁 뷰어", "뷰어 모드: 보기 전용, 끌어서 글자 선택 (F4)")):
@@ -2062,35 +2096,137 @@ class App:
         dlg.title("환경설정")
         dlg.transient(self.root)
         dlg.resizable(False, False)
-        frm = ttk.Frame(dlg, padding=14)
-        frm.pack()
+        nb = ttk.Notebook(dlg)
+        nb.pack(fill="both", expand=True, padx=10, pady=(10, 0))
+
+        # ── 일반
+        frm = ttk.Frame(nb, padding=14)
+        nb.add(frm, text="일반")
         vars_ = {}
         rows = (("fav_max", "즐겨찾기 최대 개수", 1000), ("bm_max", "북마크 최대 개수", 2000),
                 ("recent_max", "최근 본 파일 개수", 200))
-        ttk.Label(frm, text="저장 개수", font=("맑은 고딕", 10, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(frm, text="저장 개수", font=(self.theme.get("font_family"), 10, "bold")).grid(
+            row=0, column=0, sticky="w", pady=(0, 6))
         for i, (k, label, mx) in enumerate(rows, 1):
             ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", pady=2)
             v = tk.IntVar(value=self.limit(k))
             ttk.Spinbox(frm, from_=1, to=mx, textvariable=v, width=7).grid(row=i, column=1, sticky="w", padx=8)
             cur = len(self.conf["recent"]) if k == "recent_max" else \
                 count_items(self.conf["favorites" if k == "fav_max" else "bookmarks"])
-            ttk.Label(frm, text=f"(지금 {cur}개)", foreground="#777").grid(row=i, column=2, sticky="w")
+            ttk.Label(frm, text=f"(지금 {cur}개)").grid(row=i, column=2, sticky="w")
             vars_[k] = v
         ttk.Separator(frm).grid(row=5, column=0, columnspan=3, sticky="ew", pady=10)
-        ttk.Label(frm, text="보기", font=("맑은 고딕", 10, "bold")).grid(row=6, column=0, sticky="w", pady=(0, 6))
         ttk.Checkbutton(frm, text="마우스 휠 한 칸에 한 쪽씩 넘기기", variable=self.wheel_page).grid(
-            row=7, column=0, columnspan=3, sticky="w")
-        start = tk.StringVar(value=self.app_mode.get())
+            row=6, column=0, columnspan=3, sticky="w")
+        start = tk.StringVar(value=self.conf["prefs"].get("start_mode", self.app_mode.get()))
         sf = ttk.Frame(frm)
-        sf.grid(row=8, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        sf.grid(row=7, column=0, columnspan=3, sticky="w", pady=(6, 0))
         ttk.Label(sf, text="시작할 때:").pack(side="left")
         ttk.Radiobutton(sf, text="뷰어 모드", value="view", variable=start).pack(side="left", padx=6)
         ttk.Radiobutton(sf, text="편집 모드", value="edit", variable=start).pack(side="left")
         ef = ttk.Frame(frm)
-        ef.grid(row=9, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ef.grid(row=8, column=0, columnspan=3, sticky="w", pady=(6, 0))
         ttk.Label(ef, text="탐색기에서 PDF를 열면:").pack(side="left")
         ttk.Radiobutton(ef, text="새 탭", value="tab", variable=self.ext_open).pack(side="left", padx=6)
         ttk.Radiobutton(ef, text="새 창", value="window", variable=self.ext_open).pack(side="left")
+
+        # ── 화면 꾸미기
+        old_theme = dict(self.theme)
+        tf = ttk.Frame(nb, padding=14)
+        nb.add(tf, text="화면 꾸미기")
+        tv = {k: tk.StringVar(value=str(self.theme.get(k, ""))) for k in THEME_DEFAULT}
+        names = {v["name"]: k for k, v in THEMES.items()}
+        preset_name = tk.StringVar(value=THEMES.get(self.theme.get("preset"), THEMES["clip"])["name"])
+
+        r = 0
+        ttk.Label(tf, text="테마").grid(row=r, column=0, sticky="w", pady=3)
+        pc = ttk.Combobox(tf, textvariable=preset_name, values=list(names), state="readonly", width=18)
+        pc.grid(row=r, column=1, columnspan=2, sticky="w", padx=8)
+        r += 1
+        fams = sorted({f for f in tkfont.families(self.root) if not f.startswith("@")})
+        first = [f for f in FONT_FIRST if f in fams]
+        ttk.Label(tf, text="글꼴").grid(row=r, column=0, sticky="w", pady=3)
+        ttk.Combobox(tf, textvariable=tv["font_family"], values=first + [f for f in fams if f not in first],
+                     width=18).grid(row=r, column=1, columnspan=2, sticky="w", padx=8)
+        r += 1
+        ttk.Label(tf, text="글자 크기").grid(row=r, column=0, sticky="w", pady=3)
+        ttk.Spinbox(tf, from_=7, to=20, textvariable=tv["font_size"], width=5).grid(row=r, column=1, sticky="w", padx=8)
+        r += 1
+        swatches = {}
+
+        def color_row(key, label, tip):
+            nonlocal r
+            ttk.Label(tf, text=label).grid(row=r, column=0, sticky="w", pady=3)
+            sw = tk.Label(tf, width=4, relief="groove", cursor="hand2")
+            sw.grid(row=r, column=1, sticky="w", padx=8)
+            swatches[key] = sw
+            ttk.Label(tf, text=tip, foreground="#888").grid(row=r, column=2, sticky="w")
+
+            def pick(e=None):
+                c = colorchooser.askcolor(tv[key].get() or self.tcolor(key) or "#ffffff", parent=dlg)[1]
+                if c:
+                    tv[key].set(c)
+                    refresh_sw()
+            sw.bind("<Button-1>", pick)
+            r += 1
+        color_row("fg", "글자 색", "누르면 색 고르기")
+        color_row("bg", "바탕 색", "도구줄·사이드바")
+        color_row("accent", "강조 색", "눌린 버튼·선택")
+        color_row("canvas", "문서 배경 색", "쪽 뒤 배경")
+
+        def refresh_sw():
+            pr_ = THEMES[names[preset_name.get()]]
+            for k, sw in swatches.items():
+                c = tv[k].get() or pr_.get(k) or "#f0f0f0"
+                sw.configure(bg=c)
+
+        ttk.Label(tf, text="배경 그림").grid(row=r, column=0, sticky="w", pady=3)
+        wf = ttk.Frame(tf)
+        wf.grid(row=r, column=1, columnspan=2, sticky="w", padx=8)
+        wall_lbl = ttk.Label(wf, width=22)
+        wall_lbl.pack(side="left")
+
+        def show_wall():
+            w = tv["wall"].get()
+            wall_lbl.config(text=os.path.basename(w) if w else "(없음)")
+
+        def pick_wall():
+            fp = filedialog.askopenfilename(parent=dlg, filetypes=[("그림", "*.png *.jpg *.jpeg *.gif *.bmp")])
+            if fp:
+                tv["wall"].set(fp)
+                show_wall()
+        ttk.Button(wf, text="찾아보기", command=pick_wall).pack(side="left", padx=2)
+        ttk.Button(wf, text="지우기", command=lambda: (tv["wall"].set(""), show_wall())).pack(side="left")
+        r += 1
+        ttk.Label(tf, text="※ 색을 직접 고르면 테마 색보다 우선합니다. [테마 색으로]를 누르면 직접 고른 색을 지웁니다.",
+                  foreground="#888", wraplength=380).grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        r += 1
+
+        def reset_colors():
+            for k in ("fg", "bg", "accent", "canvas"):
+                tv[k].set("")
+            refresh_sw()
+
+        def collect():
+            th = {k: v.get().strip() for k, v in tv.items()}
+            th["preset"] = names[preset_name.get()]
+            try:
+                th["font_size"] = max(7, min(20, int(float(th["font_size"] or 9))))
+            except ValueError:
+                th["font_size"] = 9
+            return th
+
+        def preview():
+            self.theme = collect()
+            self.apply_theme()
+
+        tb = ttk.Frame(tf)
+        tb.grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Button(tb, text="테마 색으로", command=reset_colors).pack(side="left")
+        ttk.Button(tb, text="미리 보기", command=preview).pack(side="left", padx=4)
+        pc.bind("<<ComboboxSelected>>", lambda e: (reset_colors(), preview()))
+        refresh_sw()
+        show_wall()
 
         def ok():
             pr = self.conf["prefs"]
@@ -2106,6 +2242,9 @@ class App:
             pr["wheel_page"] = self.wheel_page.get()
             pr["start_mode"] = start.get()
             pr["app_mode"] = start.get()
+            self.theme = collect()
+            pr["theme"] = dict(self.theme)
+            self.apply_theme()
             self.on_ext_open()
             self.update_recent_menu()
             self.persist()
@@ -2114,12 +2253,140 @@ class App:
                     if count_items(self.conf["favorites" if k == "fav_max" else "bookmarks"]) > pr[k]]
             self.status.set("설정을 저장했습니다." + (f" ({', '.join(over)}보다 이미 많은 항목은 그대로 두고, "
                                                     "새로 추가할 때부터 적용합니다)" if over else ""))
-        b = ttk.Frame(frm)
-        b.grid(row=10, column=0, columnspan=3, sticky="e", pady=(14, 0))
-        ttk.Button(b, text="취소", command=dlg.destroy).pack(side="right")
+
+        def cancel():
+            if self.theme != old_theme:      # 미리 보기 했던 것 되돌림
+                self.theme = old_theme
+                self.apply_theme()
+            dlg.destroy()
+        b = ttk.Frame(dlg, padding=(10, 8))
+        b.pack(fill="x")
+        ttk.Button(b, text="취소", command=cancel).pack(side="right")
         ttk.Button(b, text="저장", command=ok).pack(side="right", padx=4)
-        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.protocol("WM_DELETE_WINDOW", cancel)
+        dlg.bind("<Escape>", lambda e: cancel())
         dlg.grab_set()
+        self._settings_dlg = (dlg, tv, preset_name, ok, cancel)   # 자동 점검용
+
+    # ---------- 화면 꾸미기 (테마 · 글꼴 · 배경) ----------
+    def tcolor(self, key):
+        """현재 테마 색. 사용자가 직접 고른 색이 우선"""
+        if key in ("fg", "bg", "accent", "canvas") and self.theme.get(key):
+            return self.theme[key]
+        return THEMES.get(self.theme.get("preset"), THEMES["clip"]).get(key) or ""
+
+    def apply_theme(self):
+        st = ttk.Style(self.root)
+        if not hasattr(self, "_native_theme"):
+            self._native_theme = st.theme_use()
+        fam = self.theme.get("font_family") or "맑은 고딕"
+        try:
+            size = max(7, min(20, int(self.theme.get("font_size") or 9)))
+        except (TypeError, ValueError):
+            size = 9
+        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkTooltipFont"):
+            try:
+                tkfont.nametofont(name).configure(family=fam, size=size)
+            except tk.TclError:
+                pass
+        bg, fg, ac = self.tcolor("bg"), self.tcolor("fg"), self.tcolor("accent")
+        field = THEMES.get(self.theme.get("preset"), THEMES["clip"]).get("field") or ("#ffffff" if bg else "")
+        if not bg:      # 기본(회색): Windows 기본 모양
+            st.theme_use(self._native_theme)
+            fg_ = fg or "black"
+            st.configure(".", font=(fam, size), foreground=fg_)
+            st.configure("Treeview", rowheight=int(size * 2.3) + 2, foreground=fg_)
+            self.root.configure(bg=st.lookup(".", "background") or "SystemButtonFace")
+            lbl_bg = st.lookup(".", "background") or "SystemButtonFace"
+        else:
+            st.theme_use("clam")
+            dark = sum(int(bg[i:i + 2], 16) for i in (1, 3, 5)) < 384
+            hover = ac if not dark else "#4a4a50"
+            st.configure(".", background=bg, foreground=fg, font=(fam, size), fieldbackground=field,
+                         bordercolor=ac, lightcolor=bg, darkcolor=bg, troughcolor=bg, selectbackground=ac,
+                         selectforeground=fg, insertcolor=fg)
+            st.configure("TButton", background=field, padding=(4, 1))
+            st.map("TButton", background=[("active", hover)])
+            st.configure("Toolbutton", background=bg, padding=(3, 1))
+            st.map("Toolbutton", background=[("selected", ac), ("active", hover)],
+                   foreground=[("selected", "#ffffff" if dark else fg)])
+            st.configure("TNotebook", background=bg, bordercolor=ac)
+            st.configure("TNotebook.Tab", background=bg, padding=(6, 2))
+            st.map("TNotebook.Tab", background=[("selected", field)], expand=[("selected", (1, 1, 1, 0))])
+            st.configure("Treeview", background=field, fieldbackground=field, foreground=fg,
+                         rowheight=int(size * 2.3) + 2)
+            st.map("Treeview", background=[("selected", ac)], foreground=[("selected", "#ffffff" if dark else fg)])
+            st.configure("Treeview.Heading", background=bg, foreground=fg)
+            for w in ("TEntry", "TSpinbox", "TCombobox"):
+                st.configure(w, fieldbackground=field, foreground=fg, background=bg, arrowcolor=fg)
+            st.map("TCombobox", fieldbackground=[("readonly", field)])
+            st.configure("TScrollbar", background=bg, arrowcolor=fg)
+            st.configure("Vertical.TScrollbar", background=bg)
+            self.root.configure(bg=bg)
+            lbl_bg = bg
+        for w, is_link in self.themed_labels:
+            try:
+                w.configure(bg=lbl_bg)
+                if is_link:
+                    w.configure(fg=self.tcolor("link") or "#1565c0", font=(fam, size, "underline"))
+            except tk.TclError:
+                pass
+        try:
+            self.ad_frame.configure(bg=lbl_bg)
+            self.ad_label.configure(bg=lbl_bg)
+        except (AttributeError, tk.TclError):
+            pass
+        self.cv.configure(bg=self.tcolor("canvas") or "#5a5a5a")
+        if hasattr(self, "theme_var"):
+            self.theme_var.set(self.theme.get("preset", "clip"))
+        self.load_wall()
+        if self.doc:
+            self.render()
+        else:
+            self.place_wall()
+
+    def set_preset(self, key):
+        """메뉴에서 테마 바로 바꾸기 (직접 고른 색은 지움, 글꼴·배경 그림은 유지)"""
+        self.theme.update(preset=key, fg="", bg="", accent="", canvas="")
+        self.conf["prefs"]["theme"] = dict(self.theme)
+        self.apply_theme()
+        self.persist()
+
+    def load_wall(self):
+        path = self.theme.get("wall") or ""
+        self._wall_src, self._wall_key, self._wall_img = None, None, None
+        self.cv.delete("wall")
+        if path and os.path.exists(path):
+            try:
+                pix = fitz.Pixmap(path)
+                if pix.alpha or pix.n != 3:
+                    pix = fitz.Pixmap(fitz.csRGB, pix, 0)
+                self._wall_src = pix
+            except Exception:
+                self.status.set("배경 그림을 열 수 없습니다.")
+
+    def place_wall(self):
+        """배경 그림을 화면 크기에 꽉 차게, 스크롤해도 제자리에"""
+        if self._wall_src is None:
+            return
+        cw, ch = max(50, self.cv.winfo_width()), max(50, self.cv.winfo_height())
+        if self._wall_key != (cw, ch):
+            src = self._wall_src
+            k = max(cw / src.width, ch / src.height)
+            try:
+                pix = fitz.Pixmap(src, max(1, int(src.width * k)), max(1, int(src.height * k)), None)
+                self._wall_img = tk.PhotoImage(data=base64.b64encode(pix.tobytes("png")))
+            except Exception:
+                self._wall_src = None
+                return
+            self._wall_key = (cw, ch)
+            self.cv.delete("wall")
+        cx, cy = self.cv.canvasx(cw / 2), self.cv.canvasy(ch / 2)
+        if self.cv.find_withtag("wall"):
+            self.cv.coords("wall", cx, cy)
+        else:
+            self.cv.create_image(cx, cy, image=self._wall_img, anchor="center", tags="wall")
+        self.cv.tag_lower("wall")
 
     def show_side(self, panel):
         if not self.panel_on.get():
@@ -2352,7 +2619,8 @@ class App:
         tw, th = self.layout()
         self.cv.configure(scrollregion=(0, 0, tw, th))
         for p, (x, y, w, h) in self.slots.items():
-            self.cv.create_rectangle(x + 3, y + 3, x + w + 3, y + h + 3, fill="#3c3c3c", outline="", tags="bg")
+            self.cv.create_rectangle(x + 3, y + 3, x + w + 3, y + h + 3, fill=self.tcolor("shadow"), outline="",
+                                     tags="bg")
             self.cv.create_rectangle(x, y, x + w, y + h, fill="white", outline="#888", tags="bg")
             self.cv.create_text(x + w / 2, y + h / 2, text=str(p + 1), fill="#bbb",
                                 font=("맑은 고딕", max(8, min(40, int(h / 12)))), tags="bg")
@@ -2413,6 +2681,7 @@ class App:
         for tag in ("tsel", "hl"):
             if self.cv.find_withtag(tag):
                 self.cv.tag_raise(tag)
+        self.place_wall()
         # 현재 쪽 = 화면 위쪽 1/3 지점에 걸친 쪽
         if self._sync_page and self.view != "single":
             mid = top + ch / 3
@@ -2579,14 +2848,19 @@ class App:
         m = self.app_mode.get()
         self.conf["prefs"]["app_mode"] = m
         self.cv.delete("hl")
+        if self.toolbtns.winfo_manager() == "":
+            self.toolbtns.pack(side="left")      # 도구 버튼은 뷰어·편집 모드 모두 표시
         if m == "view":
-            self.toolbtns.pack_forget()
+            if self.mode.get() in TOOL_LABEL:
+                self._last_tool = self.mode.get()
+            self.mode.set("")                    # 뷰어 모드에서는 눌린 도구 없음
             self.optbox.pack_forget()
             self.status.set("뷰어 모드: 끌어서 글자 선택 (Ctrl+C 복사 · Ctrl+B 북마크) · 휠 버튼으로 끌면 화면 이동 · "
                             "고치려면 [✎ 편집] (F4)")
         else:
             self.clear_selection()
-            self.toolbtns.pack(side="left")
+            if self.mode.get() not in TOOL_LABEL:
+                self.mode.set(self._last_tool)
             self.optbox.pack(side="left")
             self.on_mode()
 
@@ -2603,6 +2877,8 @@ class App:
                 "memo": "메모를 붙일 곳을 클릭하세요. 기존 메모를 클릭하면 수정/삭제합니다.",
                 "erase": "지울 색칠·도형·메모를 클릭하세요."}
         m = self.mode.get()
+        if m not in TOOL_LABEL:
+            return
         if not quiet:
             self.status.set(tips[m])
         self.cv.delete("hl")
