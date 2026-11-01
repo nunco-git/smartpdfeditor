@@ -674,6 +674,48 @@ class TreePanel(ttk.Frame):
         self.changed(node)
 
 
+class MenuBar(ttk.Frame):
+    """도구 버튼과 같은 줄에 놓는 메뉴줄 (Windows 기본 메뉴줄 옆에는 버튼을 둘 수 없어서 직접 만듦)"""
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.items = []          # (라벨, 메뉴)
+        self.colors = ("SystemButtonFace", "black", "#cce4f7")
+        self._open = None
+
+    def add_cascade(self, label, menu, **kw):
+        l_ = tk.Label(self, text=label, padx=7, pady=3, cursor="hand2", bd=0)
+        l_.pack(side="left")
+        l_.bind("<Button-1>", lambda e: self.post(l_, menu))
+        l_.bind("<Enter>", lambda e: self._hover(l_, True))
+        l_.bind("<Leave>", lambda e: self._hover(l_, False))
+        self.items.append((l_, menu))
+        self.recolor(*self.colors)
+
+    def post(self, lbl, menu):
+        self._hover(lbl, True)
+        try:
+            menu.tk_popup(lbl.winfo_rootx(), lbl.winfo_rooty() + lbl.winfo_height())
+        finally:
+            menu.grab_release()
+            self._hover(lbl, False)
+
+    def _hover(self, lbl, on):
+        bg, fg, hot = self.colors
+        try:
+            lbl.configure(bg=hot if on else bg)
+        except tk.TclError:
+            pass
+
+    def recolor(self, bg, fg, hot):
+        self.colors = (bg, fg, hot)
+        for l_, _ in self.items:
+            try:
+                l_.configure(bg=bg, fg=fg, activebackground=hot)
+            except tk.TclError:
+                pass
+
+
 class Popup(tk.Toplevel):
     """모든 대화상자: 누른 메뉴·버튼(마우스) 가까이에 뜸"""
 
@@ -1722,7 +1764,7 @@ class App:
 
     # ---------- UI ----------
     def _build_menu(self):
-        mb = tk.Menu(self.root)
+        mb = self.menubar
 
         fm = tk.Menu(mb, tearoff=0)
         fm.add_command(label="열기 (새 탭)...", accelerator="Ctrl+O", command=self.ask_open,
@@ -1885,10 +1927,8 @@ class App:
         hm2.add_separator()
         hm2.add_command(label="정보 · 라이선스", command=self.show_about)
         mb.add_cascade(label="도움말", menu=hm2)
-        self.root.config(menu=mb)
 
     def _build_ui(self):
-        self._build_menu()
         self.topbox = ttk.Frame(self.root)       # 도구줄 1~2줄 (창이 좁으면 도구 버튼이 둘째 줄로)
         self.topbox.pack(fill="x")
         bar = self.bar = ttk.Frame(self.topbox, padding=(4, 3))
@@ -1896,6 +1936,9 @@ class App:
         self.bar2 = ttk.Frame(self.topbox, padding=(4, 0, 4, 3))
         right = ttk.Frame(bar)          # 오른쪽 묶음을 먼저 배치 → 창이 좁아도 항상 보임
         right.pack(side="right")
+        self.menubar = MenuBar(bar)     # 파일·편집·보기… 메뉴 → 같은 줄에 도구 버튼이 이어짐
+        self.menubar.pack(side="left")
+        self._build_menu()
 
         def btn(icon, cmd, tip, text=None):
             b_ = ttk.Button(bar, command=cmd, text=text or "", compound="left" if text else "image", width=-1)
@@ -1907,22 +1950,10 @@ class App:
         def sep():
             ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=5)
 
+        sep()
         btn("open", self.ask_open, "열기 (Ctrl+O)", "열기")
         btn("save", self.save, "저장 (Ctrl+S)", "저장")
         btn("undo", self.do_undo, "되돌리기 (Ctrl+Z)")
-        sep()
-        btn("prev", lambda: self.go(-1), "이전 쪽 (PgUp)")
-        self.page_var = tk.StringVar(value="0 / 0")
-        e = ttk.Entry(bar, textvariable=self.page_var, width=9, justify="center")
-        self._page_entry = e
-        e.pack(side="left", padx=1)
-        e.bind("<Return>", self.jump)
-        btn("next", lambda: self.go(1), "다음 쪽 (PgDn)")
-        sep()
-        btn("zoom_out", lambda: self.set_zoom(self.zoom / 1.2), "축소 (Ctrl+-)")
-        self.zoom_lbl = ttk.Label(bar, text=f"{round(self.zoom * 100)}%", width=5, anchor="center")
-        self.zoom_lbl.pack(side="left")
-        btn("zoom_in", lambda: self.set_zoom(self.zoom * 1.2), "확대 (Ctrl++)")
         sep()
         btn("rot_l", lambda: self.rotate_pages([self.page_no], -90), "이 쪽 왼쪽으로 회전 (Ctrl+L)")
         btn("rot_r", lambda: self.rotate_pages([self.page_no], 90), "이 쪽 오른쪽으로 회전 (Ctrl+R)")
@@ -1980,20 +2011,47 @@ class App:
         self.status = tk.StringVar(value="PDF를 열어주세요 (Ctrl+O).")
         sbar = self.sbar = ttk.Frame(self.root, padding=(4, 1))
         sbar.pack(side="bottom", fill="x")
+        sbar.columnconfigure(0, weight=1, uniform="half")      # 왼쪽 절반: 안내 글
+        sbar.columnconfigure(1, weight=1, uniform="half")      # 오른쪽 절반: 가운데부터 쪽 이동·확대·보기
+        ttk.Label(sbar, textvariable=self.status, anchor="w").grid(row=0, column=0, sticky="ew", padx=(2, 8))
+        nav = ttk.Frame(sbar)
+        nav.grid(row=0, column=1, sticky="w")
+
+        def sbtn(icon, cmd, tip):
+            b_ = ttk.Button(nav, command=cmd, compound="image", width=-1)
+            self.set_icon(b_, icon, "bottom")
+            b_.pack(side="left", padx=1)
+            Tooltip(b_, tip)
+
+        def ssep():
+            ttk.Separator(nav, orient="vertical").pack(side="left", fill="y", padx=6)
+        sbtn("prev", lambda: self.go(-1), "이전 쪽 (PgUp)")
+        self.page_var = tk.StringVar(value="0 / 0")
+        e = ttk.Entry(nav, textvariable=self.page_var, width=9, justify="center")
+        self._page_entry = e
+        e.pack(side="left", padx=1)
+        e.bind("<Return>", self.jump)
+        Tooltip(e, "쪽 번호를 넣고 Enter (Ctrl+G)")
+        sbtn("next", lambda: self.go(1), "다음 쪽 (PgDn)")
+        ssep()
+        sbtn("zoom_out", lambda: self.set_zoom(self.zoom / 1.2), "축소 (Ctrl+-)")
+        self.zoom_lbl = ttk.Label(nav, text=f"{round(self.zoom * 100)}%", width=5, anchor="center")
+        self.zoom_lbl.pack(side="left")
+        sbtn("zoom_in", lambda: self.set_zoom(self.zoom * 1.2), "확대 (Ctrl++)")
+        ssep()
+        for val, ic, tip in (("width", "fit_w", "가로맞춤 — 폭에 맞춤 (Ctrl+1)"), ("height", "fit_h", "세로맞춤 — 한 쪽 전체 (Ctrl+2)")):
+            rb = ttk.Radiobutton(nav, value=val, variable=self.fit, style="Toolbutton", command=self.on_fit)
+            self.set_icon(rb, ic, "bottom")
+            rb.pack(side="left", padx=1)
+            Tooltip(rb, tip)
+        ssep()
         self.view_icons = {}
-        for k, t, _ in reversed(VIEWS):
-            rb = ttk.Radiobutton(sbar, value=t, variable=self.view_var, style="Toolbutton", command=self.on_view)
+        for k, t, _ in VIEWS:
+            rb = ttk.Radiobutton(nav, value=t, variable=self.view_var, style="Toolbutton", command=self.on_view)
             self.set_icon(rb, "v_" + k, "bottom")
             self.view_icons[k] = rb
-            rb.pack(side="right", padx=1)
+            rb.pack(side="left", padx=1)
             Tooltip(rb, t)
-        ttk.Separator(sbar, orient="vertical").pack(side="right", fill="y", padx=6)
-        for val, ic, tip in (("height", "fit_h", "세로맞춤 — 한 쪽 전체 (Ctrl+2)"), ("width", "fit_w", "가로맞춤 — 폭에 맞춤 (Ctrl+1)")):
-            rb = ttk.Radiobutton(sbar, value=val, variable=self.fit, style="Toolbutton", command=self.on_fit)
-            self.set_icon(rb, ic, "bottom")
-            rb.pack(side="right", padx=1)
-            Tooltip(rb, tip)
-        ttk.Label(sbar, textvariable=self.status, anchor="w").pack(side="left", fill="x", expand=True)
 
         # 우측: 로고(→ smartgong.kr) · 사용방법 · 뷰어/편집 모드
         try:
@@ -2996,6 +3054,11 @@ class App:
             base_bg, top_bg = base["bg"], top["bg"]
             self._top_dark, self._base_dark = self._is_dark(top_bg), self._is_dark(base_bg)
         self.root.configure(bg=base_bg)
+        top_fg = (self.tcolor("fg") or "black") if self.tcolor("bg") else "black"
+        hot = self._tint(self.tcolor("accent"), 0.55) if self.tcolor("accent") else "#cce4f7"
+        if self._top_dark:
+            hot = "#4a4a50"
+        self.menubar.recolor(top_bg, top_fg, hot)
         for w, is_link in self.themed_labels:
             try:
                 w.configure(bg=top_bg)

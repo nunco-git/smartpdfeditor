@@ -113,6 +113,13 @@ check(len(app.tabs) == 1, "탭 1개")
 check(app.doc is not None and len(app.doc) == 3, "3쪽 문서")
 check(len(app.imgs) > 0, "화면에 쪽이 그려짐")
 
+step("메뉴와 도구가 한 줄 · 쪽 이동/확대는 아래 상태줄")
+labels = [l_.cget("text") for l_, _ in app.menubar.items]
+check(labels == ["파일", "편집", "보기", "도구", "페이지", "즐겨찾기", "설정", "도움말"], f"메뉴 {labels}")
+check(app.menubar.master is app.bar, "메뉴가 도구줄과 같은 줄")
+check(str(app._page_entry.winfo_toplevel()) == "." and app._page_entry.master.master is app.sbar, "쪽 번호 칸은 아래 상태줄")
+check(int(app._page_entry.master.grid_info()["column"]) == 1, "상태줄 가운데부터 오른쪽")
+
 step("보기 방식 / 맞춤")
 for _, label, _ in S.VIEWS:
     app.view_var.set(label)
