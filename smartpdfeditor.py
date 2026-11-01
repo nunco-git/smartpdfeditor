@@ -1165,7 +1165,7 @@ class App:
         pr = self.conf["prefs"]
         try:
             g = pr.get("geometry", "1280x860")
-            sw, sh = root.winfo_screenwidth(), root.winfo_screenheight() - 60
+            sw, sh = root.winfo_screenwidth(), root.winfo_screenheight() - 110   # 작업표시줄·제목줄 여유
             try:   # 화면보다 크면 화면에 맞춤 (아래 상태줄이 가려지지 않게)
                 gw, gh = (int(v) for v in g.split("+")[0].split("x"))
             except ValueError:
