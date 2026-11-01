@@ -2552,8 +2552,13 @@ class App:
             x, y = self.root.winfo_pointerx(), self.root.winfo_pointery()
         pop.wm_geometry(f"+{x}+{y}")
         pop.bind("<Escape>", lambda e: pop.destroy())
-        pop.bind("<FocusOut>", lambda e: pop.after(150, lambda: pop.winfo_exists() and
-                                                    self.root.focus_get() is None and pop.destroy()))
+        def maybe_close():   # 색상표 바깥을 누르면 닫힘
+            if not pop.winfo_exists():
+                return
+            f = self.root.focus_get()
+            if f is None or not str(f).startswith(str(pop)):
+                pop.destroy()
+        pop.bind("<FocusOut>", lambda e: pop.after(150, maybe_close))
         pop.focus_force()
         return pop
 
