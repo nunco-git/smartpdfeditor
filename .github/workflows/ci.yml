@@ -28,7 +28,9 @@ jobs:
       - name: 기능 점검 (실제 화면으로 자동 테스트)
         env:
           PYTHONIOENCODING: utf-8
-        run: python tests/smoke_test.py
+        run: |
+          python -X faulthandler -u tests/smoke_test.py
+          if ($LASTEXITCODE -ne 0) { "종료코드 $LASTEXITCODE"; exit 1 }
 
       - name: exe 만들기
         run: >

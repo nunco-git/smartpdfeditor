@@ -5,6 +5,8 @@ GitHub Actions(ci.yml)에서 실행:  python tests/smoke_test.py
 import os
 import sys
 import time
+import faulthandler
+faulthandler.enable()
 import queue
 import tempfile
 import tkinter as tk
@@ -176,21 +178,26 @@ step("색칠 / 감추기 / 도형 / 지우개")
 app.page_no = 0
 r = app.items_for(0)[0]["rect"]
 n0 = len(list(app.doc[0].annots()))
+print("   - 색칠", flush=True)
 app.do_area("mark", r)
 check(len(list(app.doc[0].annots())) == n0 + 1, "색칠 주석 추가")
 for kind in S.SHAPES:
+    print("   - 도형", kind, flush=True)
     app.shape_kind.set(kind)
     app.do_shape(fitz.Point(100, 300), fitz.Point(200, 380))
 check(len(list(app.doc[0].annots())) == n0 + 1 + len(S.SHAPES), "도형 4종 추가")
 app.page_no = 1
+print("   - 회전된 쪽 색칠", flush=True)
 app.do_area("mark", fitz.Rect(60, 80, 300, 110))   # 회전된 쪽
 app.page_no = 0
 second = next(i for i in app.items_for(0) if "Second" in i["text"])
+print("   - 감추기", flush=True)
 app.do_area("hide", second["rect"])
 check("Second" not in app.doc[0].get_text(), "감추기 = 실제 삭제")
 a0 = list(app.doc[0].annots())[0]
 c = a0.rect
 app.page_no = 0
+print("   - 지우개", flush=True)
 app.erase_at(fitz.Point((c.x0 + c.x1) / 2, (c.y0 + c.y1) / 2))
 check(len(list(app.doc[0].annots())) == n0 + len(S.SHAPES), "지우개로 하나 삭제")
 
