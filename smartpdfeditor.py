@@ -306,13 +306,16 @@ class TreePanel(ttk.Frame):
         super().__init__(master)
         self.data, self.on_add, self.on_activate = data, on_add, on_activate
         self.label, self.on_change = label, on_change
+        self.add_text = add_text
         bar = ttk.Frame(self)
         bar.pack(fill="x", pady=(0, 3))
         ttk.Button(bar, text=add_text, command=self.add).pack(side="left")
         ttk.Button(bar, text="새 폴더", command=self.new_folder).pack(side="left", padx=2)
         ttk.Button(bar, text="이름", width=4, command=self.rename).pack(side="left")
         ttk.Button(bar, text="삭제", width=4, command=self.delete).pack(side="left", padx=2)
-        self.tv = ttk.Treeview(self, show="tree", selectmode="browse")
+        self.tv = ttk.Treeview(self, show="tree", selectmode="browse", columns=("x",))
+        self.tv.column("#0", stretch=True, width=180)
+        self.tv.column("x", width=24, minwidth=24, stretch=False, anchor="center")   # 줄 끝 × (삭제)
         sb = ttk.Scrollbar(self, orient="vertical", command=self.tv.yview)
         self.tv.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
@@ -320,6 +323,11 @@ class TreePanel(ttk.Frame):
         self.tv.tag_configure("missing", foreground="#999")
         self.map = {}
         self.drag = None
+        self._xdown = None
+        self._xhot = None
+        self.tv.bind("<Motion>", self._hover)
+        self.tv.bind("<Leave>", lambda e: self._hover(None))
+        self.tv.bind("<Button-3>", self._context)
         self.tv.bind("<Double-1>", self._dbl)
         self.tv.bind("<Return>", self._dbl)
         self.tv.bind("<Delete>", lambda e: self.delete())
@@ -340,12 +348,14 @@ class TreePanel(ttk.Frame):
             nonlocal sel_iid
             for n in nodes:
                 if n.get("type") == "folder":
-                    iid = self.tv.insert(parent, "end", text="📁 " + n.get("name", "폴더"), open=n.get("open", True))
+                    iid = self.tv.insert(parent, "end", text="📁 " + n.get("name", "폴더"), open=n.get("open", True),
+                                         values=("✕",))
                     self.map[iid] = (n, nodes)
                     put(iid, n.setdefault("children", []))
                 else:
                     miss = n.get("path") and not os.path.exists(n["path"])
-                    iid = self.tv.insert(parent, "end", text=self.label(n), tags=("missing",) if miss else ())
+                    iid = self.tv.insert(parent, "end", text=self.label(n), tags=("missing",) if miss else (),
+                                         values=("✕",))
                     self.map[iid] = (n, nodes)
                 if n is select:
                     sel_iid = iid
@@ -393,16 +403,58 @@ class TreePanel(ttk.Frame):
             node["name"] = name
             self.changed(node)
 
-    def delete(self):
-        s = self.selected()
+    def delete(self, iid=None, ask=True):
+        s = self.map.get(iid) if iid else self.selected()
         if not s:
             return
         node, cont = s
-        msg = f"'{node.get('name')}' 폴더와 안의 항목을 모두 삭제할까요?" if node.get("type") == "folder" \
-            else f"'{node.get('name')}'을(를) 삭제할까요?"
-        if messagebox.askyesno(APP, msg, parent=self):
-            remove_node(cont, node)
-            self.changed()
+        is_folder = node.get("type") == "folder"
+        if is_folder and node.get("children"):
+            msg = f"'{node.get('name')}' 폴더와 안의 항목 {count_items(node['children'])}개를 모두 삭제할까요?"
+        else:
+            msg = f"'{node.get('name')}'을(를) 삭제할까요?"
+        # × 버튼으로 지울 때는 항목은 바로, 내용 있는 폴더만 확인
+        if (ask or (is_folder and node.get("children"))) and not messagebox.askyesno(APP, msg, parent=self):
+            return
+        remove_node(cont, node)
+        self.changed()
+
+    # 줄 끝 × 버튼
+    def _hover(self, e):
+        row = None
+        if e is not None and self.tv.identify_column(e.x) == "#1":
+            row = self.tv.identify_row(e.y) or None
+        if row == self._xhot:
+            return
+        if self._xhot and self.tv.exists(self._xhot):
+            self.tv.set(self._xhot, "x", "✕")
+        self._xhot = row
+        if row:
+            self.tv.set(row, "x", "✖")
+        self.tv.configure(cursor="hand2" if row else "")
+
+    def _context(self, e):
+        """오른쪽 클릭 메뉴: 열기 · 이름 바꾸기 · 삭제 · 새 폴더"""
+        row = self.tv.identify_row(e.y)
+        m = tk.Menu(self, tearoff=0)
+        if row:
+            self.tv.selection_set(row)
+            self.tv.focus(row)
+            node = self.map[row][0]
+            if node.get("type") != "folder":
+                m.add_command(label="열기", command=lambda: self.on_activate(node))
+            m.add_command(label="이름 바꾸기", accelerator="F2", command=self.rename)
+            m.add_command(label="삭제", accelerator="Del", command=self.delete)
+            m.add_separator()
+            if node.get("type") != "folder" and node.get("path"):
+                m.add_command(label="파일 위치 열기", command=lambda: open_folder(node["path"]))
+                m.add_command(label="새 창으로 열기", command=lambda: launch_new_window([node["path"]]))
+                m.add_separator()
+        else:
+            self.tv.selection_set(())
+            m.add_command(label=self.add_text.replace("＋", "").strip(), command=self.add)
+        m.add_command(label="새 폴더", command=self.new_folder)
+        m.tk_popup(e.x_root, e.y_root)
 
     def _set_open(self, val):
         iid = self.tv.focus()
@@ -419,6 +471,11 @@ class TreePanel(ttk.Frame):
     # 끌어서 폴더로 이동
     def _press(self, e):
         iid = self.tv.identify_row(e.y)
+        if iid and self.tv.identify_column(e.x) == "#1":    # × 누름
+            self._xdown = iid
+            self.drag = None
+            return "break"
+        self._xdown = None
         self.drag = (iid, e.y, False) if iid else None
 
     def _motion(self, e):
@@ -427,6 +484,12 @@ class TreePanel(ttk.Frame):
             self.tv.configure(cursor="hand2")
 
     def _release(self, e):
+        if self._xdown:
+            iid, self._xdown = self._xdown, None
+            if self.tv.identify_row(e.y) == iid and self.tv.identify_column(e.x) == "#1":
+                self._xhot = None
+                self.delete(iid, ask=False)
+            return "break"
         d, self.drag = self.drag, None
         self.tv.configure(cursor="")
         if not d or not d[2]:

@@ -392,6 +392,39 @@ app.conf["prefs"]["fav_max"] = 100
 node = app.new_favorite()
 check(node and node["path"] == app.path, "즐겨찾기 항목")
 
+step("즐겨찾기·북마크 × 버튼 / 오른쪽 클릭 메뉴")
+fp = app.fav_panel
+fp.data.extend([{"type": "file", "name": "지울 파일", "path": pdf1},
+                {"type": "folder", "name": "빈 폴더", "children": []},
+                {"type": "file", "name": "이름 바꿀 파일", "path": pdf2}])
+fp.refresh()
+app.side.select(fp)
+pump(0.3)
+n0 = len(fp.data)
+iid = next(k for k, v in fp.map.items() if v[0]["name"] == "지울 파일")
+fp.tv.see(iid)
+pump(0.1)
+bb = fp.tv.bbox(iid, "x")
+check(bool(bb) and fp.tv.set(iid, "x") == "✕", "줄 끝 × 표시")
+if bb:
+    ev = Ev()
+    ev.x, ev.y = bb[0] + bb[2] // 2, bb[1] + bb[3] // 2
+    fp._press(ev)
+    fp._release(ev)
+    check(len(fp.data) == n0 - 1 and all(n.get("name") != "지울 파일" for n in fp.data), "× 눌러 바로 삭제")
+iid = next(k for k, v in fp.map.items() if v[0]["name"] == "빈 폴더")
+fp.delete(iid, ask=False)
+check(all(n.get("name") != "빈 폴더" for n in fp.data), "빈 폴더 × 삭제")
+iid = next(k for k, v in fp.map.items() if v[0]["name"] == "이름 바꿀 파일")
+fp.tv.selection_set(iid)
+_ask = S.ask_text
+S.ask_text = lambda *a, **k: "바뀐 이름"
+fp.rename()
+S.ask_text = _ask
+check(any(n.get("name") == "바뀐 이름" for n in fp.data), "이름 바꾸기")
+check(hasattr(fp, "_context"), "오른쪽 클릭 메뉴")
+shot("8_favorites_x")
+
 step("폴더에서 PDF 찾기 (본문)")
 sp = app.search_panel
 app.focus_search("folder")
