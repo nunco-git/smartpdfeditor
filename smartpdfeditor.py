@@ -179,45 +179,130 @@ LOGO_PNG = (
     "0Wxo2FFKQUFBFKVNIVNQCyNvarlD9HZj14tXtYNT/D+ipqhACDx3PgAAAABJRU5ErkJggg=="
 )
 
-HELP_TEXT = [
-    ("스마트PDF Editor 사용방법", "h1"),
-    ("PDF를 보면서 바로 글자를 고치고, 색칠·도형·메모·캡쳐까지 할 수 있는 프로그램입니다.\n", ""),
-    ("■ 파일 열기", "h2"),
-    ("· Ctrl+O 또는 [열기] — 여러 파일을 고르면 탭으로 각각 열립니다.\n"
-     "· 탐색기에서 PDF를 더블클릭하면 이미 켜진 창의 새 탭으로 열립니다. (설정에서 '새 창'으로 변경 가능)\n"
-     "· Ctrl+Tab 탭 이동 · Ctrl+W 탭 닫기 · 탭 우클릭 → 새 창으로 옮기기\n", ""),
-    ("■ 보기", "h2"),
-    ("· 마우스 휠로 위아래 연속 스크롤 (보기 메뉴: 휠 한 칸에 한 쪽씩), Ctrl+휠 확대/축소\n"
-     "· 아래 상태줄 오른쪽 아이콘: ↔ 가로맞춤 · ↕ 세로맞춤 · 한 쪽씩 / 연속 / 2·3·4쪽 나란히\n"
-     "· 👁 뷰어 모드: 끌어서 글자 선택 → Ctrl+C 복사, Ctrl+B 선택한 글자로 북마크, 우클릭 메뉴\n"
-     "· 휠 버튼(가운데 버튼)으로 끌면 화면 이동\n", ""),
-    ("■ 도구 (Esc = 글자수정으로 돌아가기)", "h2"),
-    ("· ✎ 글자수정: 글자를 클릭 → 새 글자 입력 → Enter.  Ctrl+H 찾아 바꾸기\n"
-     "· 🖍 색칠: 글자를 클릭하거나 영역을 끌어서 형광펜 — [색상표 ▾]에서 24가지 색 또는 직접 고르기\n"
-     "· ■ 감추기: 영역을 끌면 아래 내용을 지우고 검정/흰색으로 덮음 (개인정보 가리기)\n"
-     "· ◻ 도형: 사각형·원·선·화살표를 끌어서 그리기 (Shift = 정사각형·정원)\n"
-     "· 💬 메모: 클릭한 곳(주황 점)에 노란 글상자가 붙고 점선으로 이어짐. 상자를 끌어 옮겨도 연결 유지 · 클릭해서 고치기\n"
-     "   [도구 → 메모]에서 '아이콘 + 오른쪽 쪽지' 방식으로 바꿀 수 있음\n"
-     "· ⌫ 지우개: 색칠·도형·메모를 클릭해서 지우기\n"
-     "· ✂ 캡쳐(Ctrl+Shift+C): 영역을 끌면 클립보드로 복사 → 한글·카톡 등에 Ctrl+V\n", ""),
-    ("■ 페이지", "h2"),
-    ("· 지금 쪽 회전 (Ctrl+L / Ctrl+R) · 여러 쪽 골라서 회전 · 전체 쪽 회전\n"
-     "· Ctrl+F 이 파일에서 찾기 (Enter·F3 다음, Shift+F3 이전)\n"
-     "· [원하는 쪽만 저장] (Ctrl+E): 예) 7, 2, 10-12 → 그 쪽들만 새 PDF로\n", ""),
-    ("■ 왼쪽 사이드바 (F9로 숨기기)", "h2"),
-    ("· 즐겨찾기(Ctrl+D) · 북마크(Ctrl+B) — 글자를 선택하고 Ctrl+B 하면 묻지 않고 그 글자 이름으로 바로 추가\n"
-     "· 폴더에서 PDF 찾기(Ctrl+Shift+F): 파일명·본문으로 찾기 → 결과를 즐겨찾기/북마크로 저장\n"
-     "· 즐겨찾기·북마크: 줄 끝 × 로 삭제, 오른쪽 클릭 메뉴(이름 바꾸기·삭제), Ctrl·Shift+클릭으로 여러 개 선택 후 Delete\n"
-     "· 탭의 × 를 누르면 그 파일 닫기 (휠 버튼 클릭도 됨)\n", ""),
-    ("■ 저장", "h2"),
-    ("· Ctrl+S — 기본 이름은 '원본_수정.pdf' (원본은 그대로)\n"
-     "· Ctrl+Z 되돌리기 (최근 30번)\n"
-     "· [설정] → 설정 내보내기/가져오기로 즐겨찾기·북마크를 다른 PC로 옮기기\n", ""),
-    ("■ 화면 꾸미기", "h2"),
-    ("· [설정 → 테마]: 스마트클립(주황) · 기본(회색) · 밝게 · 어둡게\n"
-     "· [설정 → 환경설정 → 화면 꾸미기]: 글꼴·글자 크기·글자 색·바탕 색·강조 색·문서 배경 색·배경 그림\n", ""),
-    ("더 많은 업무 도구는 smartgong.kr 에서 만나보세요.\n"
-     "이 프로그램은 AGPL-3.0 오픈소스입니다 · 소스: github.com/nunco-git/smartpdfeditor", "foot"),
+# 사용방법 (도움말 창: 왼쪽 목차 → 오른쪽 내용)
+# 항목: "글"            → 점(•) 줄
+#       ("키", 단축키, 설명) → 단축키 표 한 줄
+#       ("소", 글)        → 작은 제목
+#       ("주", 글)        → 알아두기(회색)
+HELP_SECTIONS = [
+    ("시작하기", "open", [
+        ("소", "파일 열기"),
+        "[열기] 또는 Ctrl+O — 여러 파일을 한꺼번에 고르면 탭으로 각각 열립니다.",
+        "탐색기에서 PDF를 더블클릭하면 이미 켜진 창의 새 탭으로 열립니다. (설정에서 '새 창'으로 바꿀 수 있음)",
+        "PDF 파일을 smartpdfeditor.exe 아이콘 위로 끌어다 놓아도 열립니다.",
+        "다시 열면 마지막으로 보던 쪽에서 이어집니다.",
+        ("소", "저장 · 되돌리기"),
+        "Ctrl+S — 기본 이름은 '원본이름_수정.pdf' 라서 원본은 그대로 남습니다.",
+        "Ctrl+Z — 되돌리기 (최근 30번까지). 저장하지 않은 탭 이름 앞에는 ● 표시가 붙습니다.",
+    ]),
+    ("화면 구성", "m_view", [
+        "위 도구줄 — 열기·저장·되돌리기 | 쪽 이동 | 확대·축소 | 회전 | 편집 도구 | 오른쪽: 뷰어/편집 전환 · 사용방법 · 스마트공",
+        "왼쪽 사이드바 (F9로 숨기기) — 즐겨찾기 · 북마크 · 최근 · 검색, 맨 아래 광고 칸(광고가 없으면 접힘)",
+        "아래 상태줄 — 왼쪽: 지금 할 수 있는 일 안내 / 오른쪽: 맞춤(↔ ↕)과 보기 방식 아이콘",
+        "창이 좁으면 도구 버튼이 둘째 줄로 내려가서 잘리지 않습니다.",
+        "모든 대화상자는 누른 메뉴·버튼 가까이에 뜹니다.",
+    ]),
+    ("보기 · 쪽 이동", "v_cont", [
+        ("소", "보기 방식 (아래 상태줄 오른쪽 아이콘)"),
+        "한 쪽씩 · 연속 스크롤 · 2쪽 · 3쪽 · 4쪽 나란히",
+        ("소", "맞춤 · 확대"),
+        ("키", "Ctrl+1  /  Ctrl+2", "가로맞춤(폭에 맞춤)  /  세로맞춤(한 쪽 전체)"),
+        ("키", "Ctrl+휠  ·  Ctrl + / -", "확대 · 축소"),
+        ("키", "Ctrl+0", "실제 크기 100%"),
+        ("소", "쪽 이동"),
+        ("키", "마우스 휠", "위아래로 이어서 스크롤 ([보기] 메뉴에서 '휠 한 칸에 한 쪽씩'도 가능)"),
+        ("키", "PgUp / PgDn · Home / End", "이전·다음 쪽 · 첫 쪽·마지막 쪽"),
+        ("키", "Ctrl+G", "쪽 번호 입력해서 이동"),
+        ("키", "휠 버튼(가운데) 끌기 · Shift+휠", "화면 이리저리 옮기기 · 가로 스크롤"),
+    ]),
+    ("뷰어 모드 / 편집 모드", "m_edit", [
+        "오른쪽 위 [뷰어] [편집] 버튼 또는 F4로 바꿉니다. 시작할 때의 모드는 [설정 → 환경설정]에서 정합니다.",
+        ("소", "👁 뷰어 모드 — 편하게 읽기"),
+        "글자 위를 끌면 선택됩니다 → Ctrl+C 복사 · Ctrl+B 그 글자로 북마크 · Ctrl+F 그 글자 찾기",
+        "오른쪽 클릭 메뉴: 복사 · 북마크 추가 · 선택한 글자 색칠 · 쪽 회전 · 쪽 캡쳐",
+        ("소", "✎ 편집 모드 — 고치기"),
+        "위 도구줄의 도구(수정·색칠·감추기·도형·메모·지우개·캡쳐)를 골라 씁니다.",
+        "뷰어 모드에서 도구 버튼을 누르면 자동으로 편집 모드가 됩니다. Esc = 글자 수정 도구로.",
+    ]),
+    ("편집 도구", "t_edit", [
+        ("소", "수정 — 글자 고치기"),
+        "글자를 클릭 → 새 글자 입력 → Enter. 글자 크기·굵게도 바꿀 수 있습니다.",
+        "[편집] 메뉴: 줄 단위/조각 단위, 새 글자가 길면 글자 크기 줄이기.  Ctrl+H 찾아 바꾸기",
+        ("소", "색칠 — 형광펜"),
+        "글자를 클릭하거나 영역을 끌어서 칠합니다.",
+        "색: 빠른 색 4가지 · [색상표 ▾] 24가지 · '다른 색 직접 고르기'",
+        ("소", "감추기 — 개인정보 가리기"),
+        "영역을 끌면 아래 글자·그림을 실제로 지우고 검정(또는 흰색)으로 덮습니다. 복사·검색해도 안 나옵니다.",
+        ("소", "도형"),
+        "사각형 · 원(항상 정원) · 타원 · 삼각형 · 선 · 화살표 — 끌어서 그리기 (Shift: 정사각형·45° 선)",
+        "선 색 · 두께 · 채우기(없음/반투명/채움)는 도구줄 옆과 [도구 → 도형]에서 고릅니다.",
+        ("소", "메모"),
+        "누른 곳에 주황 점이 찍히고, 그 옆에 노란 글상자로 내용이 붙어 점선으로 이어집니다.",
+        "상자를 끌어 옮겨도 원래 위치와의 연결은 유지됩니다. 상자를 클릭하면 고치기·삭제.",
+        "메모 내용은 본문에 보이고 검색도 됩니다. [도구 → 메모]에서 '아이콘 + 오른쪽 쪽지' 방식도 고를 수 있습니다.",
+        ("소", "지우개"),
+        "색칠·도형·메모를 클릭하면 지워집니다. (글자 수정·감추기는 Ctrl+Z로 되돌리기)",
+        ("소", "캡쳐 (Ctrl+Shift+C)"),
+        "영역을 끌면 그 부분이, 그냥 클릭하면 쪽 전체가 클립보드로 복사됩니다 → 한글·카톡 등에서 Ctrl+V",
+        "미리보기 창에서 그림 파일(PNG/JPG)로 저장. 해상도는 [도구 → 캡쳐]에서 (기본 200dpi).",
+    ]),
+    ("쪽(페이지) 다루기", "rot_r", [
+        ("키", "Ctrl+L  /  Ctrl+R", "지금 쪽 왼쪽 / 오른쪽으로 회전"),
+        ("키", "도구줄 겹친 쪽 아이콘", "여러 쪽 골라서 회전 · 전체 쪽 회전 ([페이지] 메뉴: 왼쪽·180°)"),
+        ("키", "Ctrl+E", "원하는 쪽만 새 PDF로 저장 — 예) 7, 2, 10-12  /  8- (8쪽부터 끝까지)"),
+    ]),
+    ("찾기", "find", [
+        ("키", "Ctrl+F", "이 파일에서 찾기 — 찾은 곳 목록이 나오고 첫 곳으로 이동해 파랗게 표시"),
+        ("키", "Enter · F3  /  Shift+F3", "다음 찾은 곳  /  이전 찾은 곳"),
+        ("키", "Ctrl+Shift+F", "폴더에서 PDF 찾기 — 파일 이름·본문으로, 하위 폴더까지"),
+        ("키", "Ctrl+H", "찾아 바꾸기"),
+        "폴더 검색 결과는 [목록 저장]으로 즐겨찾기·북마크 폴더에 넣어 둘 수 있습니다.",
+    ]),
+    ("탭 · 새 창", "plus", [
+        "여러 파일을 탭으로 엽니다. 탭 이름의 × 또는 휠 버튼 클릭 · Ctrl+W 로 닫기",
+        ("키", "Ctrl+Tab", "다음 탭"),
+        ("키", "Ctrl+N  ·  Ctrl+Shift+O", "새 창  ·  새 창으로 열기"),
+        "탭을 오른쪽 클릭: 다른 탭 모두 닫기 · 이 탭을 새 창으로 옮기기 · 파일 위치 열기",
+    ]),
+    ("즐겨찾기 · 북마크 · 최근", "star", [
+        ("키", "Ctrl+D", "지금 파일을 즐겨찾기에 추가"),
+        ("키", "Ctrl+B", "북마크 추가 — 글자를 선택해 두면 묻지 않고 그 글자 이름으로, 그 위치로 바로 추가"),
+        "더블클릭하면 열기(북마크는 그 쪽·그 위치로). 폴더를 만들고 끌어서 정리합니다.",
+        "줄 끝 × 로 바로 삭제 · 오른쪽 클릭: 열기 · 이름 바꾸기(F2) · 삭제 · 새 폴더",
+        "Ctrl·Shift+클릭으로 여러 개 골라 Delete로 한꺼번에 삭제, Ctrl+A 전체 선택",
+        "[최근] 탭: 최근 본 파일 200개 · 마지막으로 본 쪽 · 열어본 시각",
+        ("주", "모두 자동으로 저장됩니다: %APPDATA%\\smartpdfeditor\\settings.json  (파일은 경로만 기억하므로 옮기면 회색으로 표시)"),
+    ]),
+    ("설정 · 화면 꾸미기", "gear", [
+        ("소", "[설정 → 테마]"),
+        "스마트클립(주황) · 기본(회색) · 밝게 · 어둡게 — 색은 위 도구줄에만 (어둡게는 화면 전체)",
+        ("소", "[설정 → 환경설정]"),
+        "일반: 즐겨찾기·북마크·최근 파일 개수, 휠 한 칸에 한 쪽, 시작 모드, 탐색기에서 열 때 새 탭/새 창",
+        "화면 꾸미기: 글꼴 · 글자 크기 · 글자/바탕/강조/문서 배경 색 · 배경 그림 ([미리 보기]로 확인)",
+        ("소", "다른 PC로 옮기기"),
+        "[설정 → 설정 내보내기]로 json 파일을 만들고, 새 PC에서 [설정 가져오기] (합치기 또는 덮어쓰기)",
+    ]),
+    ("단축키 한눈에", "help", [
+        ("키", "Ctrl+O · Ctrl+S · Ctrl+Z", "열기 · 저장 · 되돌리기"),
+        ("키", "Ctrl+W · Ctrl+Tab · Ctrl+N", "탭 닫기 · 다음 탭 · 새 창"),
+        ("키", "F4 · F9 · F1", "뷰어/편집 전환 · 사이드바 · 사용방법"),
+        ("키", "Ctrl+F · F3 · Ctrl+H", "찾기 · 다음 찾기 · 찾아 바꾸기"),
+        ("키", "Ctrl+Shift+F", "폴더에서 PDF 찾기"),
+        ("키", "Ctrl+C · Ctrl+Shift+C", "선택한 글자 복사 · 캡쳐 도구"),
+        ("키", "Ctrl+D · Ctrl+B", "즐겨찾기 · 북마크 추가"),
+        ("키", "Ctrl+L · Ctrl+R · Ctrl+E", "왼쪽 회전 · 오른쪽 회전 · 원하는 쪽만 저장"),
+        ("키", "Ctrl+1 · Ctrl+2 · Ctrl+0", "가로맞춤 · 세로맞춤 · 100%"),
+        ("키", "PgUp · PgDn · Home · End · Ctrl+G", "쪽 이동"),
+        ("키", "Esc", "글자 수정 도구로 · 창 닫기"),
+    ]),
+    ("알아두기", "pdf", [
+        "스캔한(그림으로 된) PDF는 글자 정보가 없어 글자 수정·찾기가 되지 않습니다.",
+        "수정한 글자는 맑은 고딕으로 다시 써집니다(원래 글꼴과 모양이 조금 다를 수 있음).",
+        "감추기로 지운 내용은 저장하면 되살릴 수 없습니다. 원본은 따로 남겨 두세요.",
+        "메모의 주황 점·점선은 이 프로그램에서만 보입니다(다른 뷰어에서는 노란 메모 상자만).",
+        "이 프로그램은 AGPL-3.0 오픈소스입니다 — 소스: github.com/nunco-git/smartpdfeditor  ([도움말 → 정보])",
+        "더 많은 업무 도구는 smartgong.kr 에서 만나보세요.",
+    ]),
 ]
 IPC_PORT = 48517          # 프로그램 하나만 실행: 두 번째 실행은 이 포트로 파일을 넘기고 종료
 IPC_TOKEN = "PDFTE-1"
@@ -2219,36 +2304,120 @@ class App:
         ttk.Button(frm, text="닫기", command=dlg.destroy).pack(pady=(14, 0))
         dlg.bind("<Escape>", lambda e: dlg.destroy())
 
-    def show_help(self):
+    def show_help(self, section=None):
+        """사용방법: 왼쪽 목차를 누르면 오른쪽 내용이 그 부분으로 이동"""
         if getattr(self, "_help", None) and self._help.winfo_exists():
             self._help.lift()
+            if section is not None:
+                self._help_goto(section)
             return
         dlg = self._help = Popup(self.root)
         dlg.title(f"{APP} 사용방법")
         dlg.transient(self.root)
-        dlg.geometry("600x620")
-        frm = ttk.Frame(dlg, padding=10)
-        frm.pack(fill="both", expand=True)
-        bot = ttk.Frame(frm)
-        bot.pack(side="bottom", fill="x", pady=(8, 0))
-        link = tk.Label(bot, text="smartgong.kr 바로가기", fg="#1565c0", cursor="hand2",
-                        font=("맑은 고딕", 9, "underline"))
-        link.pack(side="left")
-        link.bind("<Button-1>", lambda e: webbrowser.open(HOME_URL))
+        dlg.geometry("820x640")
+        dlg.minsize(560, 400)
+        fam = self.theme.get("font_family") or "맑은 고딕"
+        try:
+            fs = max(9, int(self.theme.get("font_size") or 9) + 1)
+        except (TypeError, ValueError):
+            fs = 10
+        acc = "#f6a53f"
+
+        head = tk.Frame(dlg, bg="#fff6e8")
+        head.pack(fill="x")
+        if getattr(self, "logo_img", None):
+            tk.Label(head, image=self.logo_img, bg="#fff6e8").pack(side="left", padx=(12, 8), pady=8)
+        tk.Label(head, text=f"{APP} 사용방법", bg="#fff6e8", fg="#3e2a00",
+                 font=(fam, fs + 5, "bold")).pack(side="left", pady=8)
+        tk.Label(head, text=f"버전 {APP_VER}", bg="#fff6e8", fg="#8a6d3b", font=(fam, fs - 1)).pack(
+            side="left", padx=8, pady=(14, 8))
+        tk.Frame(dlg, bg=acc, height=3).pack(fill="x")
+
+        bot = ttk.Frame(dlg, padding=(10, 6))
+        bot.pack(side="bottom", fill="x")
+        for text, url in (("smartgong.kr", HOME_URL), ("소스 코드", SOURCE_URL), ("새 버전", RELEASES_URL)):
+            l_ = tk.Label(bot, text=text, fg="#1565c0", cursor="hand2", font=(fam, fs - 1, "underline"))
+            l_.pack(side="left", padx=(0, 12))
+            l_.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
         ttk.Button(bot, text="닫기", command=dlg.destroy).pack(side="right")
-        txt = tk.Text(frm, wrap="word", font=("맑은 고딕", 10), relief="flat", bg="#fbfbfb",
-                      padx=12, pady=10, spacing1=2, spacing3=2, cursor="arrow")
-        sb = ttk.Scrollbar(frm, orient="vertical", command=txt.yview)
+
+        body = ttk.PanedWindow(dlg, orient="horizontal")
+        body.pack(fill="both", expand=True)
+        # 왼쪽 목차
+        toc = tk.Listbox(body, activestyle="none", exportselection=False, bd=0, highlightthickness=0,
+                         font=(fam, fs), bg="#faf7f2", fg="#3e2a00", selectbackground="#fcd9a6",
+                         selectforeground="#3e2a00", width=18)
+        for i, (title, icon, _) in enumerate(HELP_SECTIONS):
+            toc.insert("end", f"  {i + 1:>2}.  {title}")
+        body.add(toc, weight=0)
+        # 오른쪽 내용
+        right = ttk.Frame(body)
+        body.add(right, weight=1)
+        txt = tk.Text(right, wrap="word", font=(fam, fs), relief="flat", bg="#ffffff", fg="#2b2b2b",
+                      padx=18, pady=12, spacing1=3, spacing3=3, cursor="arrow", tabs=("190p",))
+        sb = ttk.Scrollbar(right, orient="vertical", command=txt.yview)
         txt.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         txt.pack(fill="both", expand=True)
-        txt.tag_configure("h1", font=("맑은 고딕", 15, "bold"), foreground="#2e7d32", spacing3=6)
-        txt.tag_configure("h2", font=("맑은 고딕", 11, "bold"), foreground="#1565c0", spacing1=10)
-        txt.tag_configure("foot", foreground="#777", spacing1=14)
-        for text, tag in HELP_TEXT:
-            txt.insert("end", text + ("\n" if tag else ""), tag)
+        txt.tag_configure("h2", font=(fam, fs + 3, "bold"), foreground="#b4610a", spacing1=14, spacing3=6)
+        txt.tag_configure("sub", font=(fam, fs, "bold"), foreground="#3e2a00", spacing1=8, lmargin1=4)
+        txt.tag_configure("bullet", lmargin1=10, lmargin2=26)
+        txt.tag_configure("dot", foreground=acc)
+        txt.tag_configure("key", font=(fam, fs - 1, "bold"), foreground="#1f4e8c", background="#eef3fb",
+                          lmargin1=10, lmargin2=200)
+        txt.tag_configure("keydesc", lmargin1=10, lmargin2=200)
+        txt.tag_configure("note", foreground="#777777", lmargin1=10, lmargin2=10, spacing1=8,
+                          font=(fam, fs - 1))
+        txt.tag_configure("rule", font=(fam, 4), background="#f1e4cf")
+        self._help_icons = []
+        for i, (title, icon, items) in enumerate(HELP_SECTIONS):
+            txt.mark_set(f"sec{i}", "end-1c")
+            txt.mark_gravity(f"sec{i}", "left")
+            if i:
+                txt.insert("end", " \n", "rule")
+            try:
+                img = self.icon(icon, "menu")
+                if img:
+                    txt.image_create("end", image=img, padx=4)
+                    self._help_icons.append(img)
+            except tk.TclError:
+                pass
+            txt.insert("end", f" {title}\n", "h2")
+            for it in items:
+                if isinstance(it, str):
+                    txt.insert("end", "•  ", ("bullet", "dot"))
+                    txt.insert("end", it + "\n", "bullet")
+                elif it[0] == "소":
+                    txt.insert("end", it[1] + "\n", "sub")
+                elif it[0] == "키":
+                    txt.insert("end", f" {it[1]} ", "key")
+                    txt.insert("end", "\t" + it[2] + "\n", "keydesc")
+                elif it[0] == "주":
+                    txt.insert("end", "※ " + it[1] + "\n", "note")
+        txt.insert("end", "\n" * 8)
         txt.config(state="disabled")
+
+        def goto(i):
+            txt.yview(f"sec{i}")
+            toc.selection_clear(0, "end")
+            toc.selection_set(i)
+            toc.see(i)
+        self._help_goto = goto
+        toc.bind("<<ListboxSelect>>", lambda e: toc.curselection() and txt.yview(f"sec{toc.curselection()[0]}"))
+
+        def sync(*_):      # 내용을 스크롤하면 목차도 따라 표시
+            top = txt.index("@0,0")
+            cur = 0
+            for i in range(len(HELP_SECTIONS)):
+                if txt.compare(f"sec{i}", "<=", top):
+                    cur = i
+            if toc.curselection() != (cur,):
+                toc.selection_clear(0, "end")
+                toc.selection_set(cur)
+        txt.configure(yscrollcommand=lambda a_, b_: (sb.set(a_, b_), sync()))
+        goto(section or 0)
         dlg.bind("<Escape>", lambda e: dlg.destroy())
+        self._help_text = txt
 
     # ---------- 탭 ----------
     def switch_tab(self, t):

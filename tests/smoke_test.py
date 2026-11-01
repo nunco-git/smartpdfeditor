@@ -534,6 +534,19 @@ app.settings_dialog()
 app.show_help()
 app.show_about()
 pump(0.4)
+check(len(S.HELP_SECTIONS) >= 10, "사용방법 목차")
+app._help_goto(4)
+pump(0.3)
+try:
+    from PIL import ImageGrab
+    hw = app._help
+    hw.lift(); pump(0.4)
+    x, y = hw.winfo_rootx(), hw.winfo_rooty()
+    os.makedirs(SHOTS, exist_ok=True)
+    ImageGrab.grab(bbox=(x, y, x + hw.winfo_width(), y + hw.winfo_height()), all_screens=True).save(
+        os.path.join(SHOTS, "10_help.png"))
+except Exception as ex:
+    print("   (도움말 스크린샷 생략:", ex, ")")
 pops = [w for w in root.winfo_children() if isinstance(w, S.Popup)]
 check(len(pops) >= 3 and all(w.winfo_viewable() for w in pops), "팝업창 표시")
 px, py = root.winfo_pointerx(), root.winfo_pointery()
