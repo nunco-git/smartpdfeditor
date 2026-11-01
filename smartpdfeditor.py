@@ -3433,11 +3433,6 @@ class App:
             self.root.iconphoto(True, *self._app_icons)
         except (tk.TclError, KeyError):
             pass
-        if getattr(sys, "frozen", False) and sys.platform == "win32":
-            try:   # exe 안의 아이콘도 함께 (작업표시줄이 더 선명)
-                self.root.iconbitmap(default=sys.executable)
-            except tk.TclError:
-                pass
 
     # ---------- 탭 닫기(×) 버튼 ----------
     def ensure_tab_close(self, st, force_layout=False):
