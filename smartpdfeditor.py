@@ -41,6 +41,7 @@ import urllib.parse
 import contextlib
 import socket
 import threading
+import uuid
 import queue
 import time
 import tkinter as tk
@@ -96,9 +97,22 @@ AD_W, AD_H = 250, 250     # 광고창 기본 크기 (사이드바 폭에 맞춘 
 AD_FILES = ("ad.png", "ad.gif", "ad.jpg", "ad.jpeg")   # 실행파일 옆에 두면 이 광고가 우선 (시험용)
 AD_LINK_FILE = "ad.txt"   # 첫 줄 = 광고 클릭 시 열 주소
 AD_URL = "https://smartgong.kr/ads/smartpdfeditor.json"   # 인터넷 광고 설정
+# 사용 통계 — 설치된 컴퓨터 수만 셉니다. 보내는 것: 무작위 번호 + 프로그램 버전 (하루 한 번)
+# 환경설정 → 일반 → 「사용 통계 보내지 않기」로 끌 수 있습니다.
+FIREBASE_DB_URL = "https://smartexplorer-d569e-default-rtdb.asia-southeast1.firebasedatabase.app"
+STATS_APP = "smartpdfeditor"
+
+
+def stats_call(url, method, body):
+    """Firebase REST 호출 한 번. 실패하면 예외 — 부르는 쪽에서 조용히 넘깁니다."""
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method=method,
+                                 headers={"Content-Type": "application/json",
+                                          "User-Agent": f"smartpdfeditor/{APP_VER}"})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        r.read()
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.1"
+APP_VER = "1.0.2"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -302,6 +316,7 @@ HELP_SECTIONS = [
         "감추기로 지운 내용은 저장하면 되살릴 수 없습니다. 원본은 따로 남겨 두세요.",
         "메모의 주황 점·점선은 이 프로그램에서만 보입니다(다른 뷰어에서는 노란 메모 상자만).",
         "이 프로그램은 AGPL-3.0 오픈소스입니다 — 소스: github.com/nunco-git/smartpdfeditor  ([도움말 → 정보])",
+        "설치 수 통계로 하루 한 번 무작위 번호와 버전만 보냅니다 — 끄기: [환경설정 → 일반 → 사용 통계 보내지 않기]",
         "더 많은 업무 도구는 smartgong.kr 에서 만나보세요.",
     ]),
 ]
@@ -2096,6 +2111,46 @@ class App:
         self.apply_theme()
         self.set_app_mode()
         self.root.after(200, self.poll_ipc)
+        self.root.after(3000, self.send_stats)
+
+    # ---------- 사용 통계 ----------
+    def send_stats(self):
+        """하루 한 번, 무작위 번호와 버전만 보냅니다. 끄기: 환경설정 → 일반"""
+        pr = self.conf["prefs"]
+        if not FIREBASE_DB_URL or pr.get("no_stats"):
+            return
+        new = False
+        iid = pr.get("install_id")
+        if not (isinstance(iid, str) and len(iid) == 32):
+            iid = pr["install_id"] = uuid.uuid4().hex
+            new = True
+            save_conf(self.conf)
+        today = datetime.date.today().isoformat()
+        if not new and pr.get("last_ping") == today:
+            return
+        base = f"{FIREBASE_DB_URL}/apps/{STATS_APP}"
+        rec = {"v": APP_VER, "last": {".sv": "timestamp"}}
+        if new or not pr.get("stats_first"):
+            rec["first"] = {".sv": "timestamp"}   # 처음 한 번만 (규칙상 한 번 쓰면 못 바꿈)
+
+        def work():
+            try:
+                stats_call(f"{base}/installs/{iid}.json", "PATCH", rec)
+            except Exception:
+                return
+            try:
+                self.root.after(0, lambda: pr.__setitem__("stats_first", True))
+            except Exception:
+                pass
+            try:
+                stats_call(f"{base}/daily/{today}/{iid}.json", "PUT", True)
+            except Exception:
+                return
+            try:
+                self.root.after(0, lambda: pr.__setitem__("last_ping", today))
+            except Exception:
+                pass
+        threading.Thread(target=work, daemon=True).start()
 
     # ---------- UI ----------
     def _build_menu(self):
@@ -2697,7 +2752,9 @@ class App:
                "다시 배포할 때에는 같은 라이선스로 소스를 공개해야 합니다.\n"
                "이 프로그램은 어떠한 보증도 없이 제공됩니다.\n\n"
                "PDF 처리에 PyMuPDF / MuPDF (AGPL-3.0, © Artifex Software, Inc.)를 사용합니다.\n"
-               "'스마트공' 이름과 로고는 smartgong.kr의 것입니다.")
+               "'스마트공' 이름과 로고는 smartgong.kr의 것입니다.\n\n"
+               "설치 수를 세기 위해 하루 한 번 무작위 번호와 프로그램 버전만 보냅니다.\n"
+               "파일 이름·내용 등 다른 정보는 보내지 않으며, 환경설정 → 일반에서 끌 수 있습니다.")
         ttk.Label(frm, text=msg, justify="center").pack()
         links = ttk.Frame(frm)
         links.pack(pady=(12, 0))
@@ -3132,6 +3189,9 @@ class App:
         ttk.Separator(frm).grid(row=5, column=0, columnspan=3, sticky="ew", pady=10)
         ttk.Checkbutton(frm, text="마우스 휠 한 칸에 한 쪽씩 넘기기", variable=self.wheel_page).grid(
             row=6, column=0, columnspan=3, sticky="w")
+        no_stats = tk.BooleanVar(value=bool(self.conf["prefs"].get("no_stats", False)))
+        ttk.Checkbutton(frm, text="사용 통계 보내지 않기 (보내는 것: 무작위 번호와 버전뿐)",
+                        variable=no_stats).grid(row=9, column=0, columnspan=3, sticky="w", pady=(6, 0))
         start = tk.StringVar(value=self.conf["prefs"].get("start_mode", self.app_mode.get()))
         sf = ttk.Frame(frm)
         sf.grid(row=7, column=0, columnspan=3, sticky="w", pady=(6, 0))
@@ -3254,6 +3314,7 @@ class App:
             if len(self.conf["recent"]) > n:
                 self.conf["recent"] = self.conf["recent"][:n]
             pr["wheel_page"] = self.wheel_page.get()
+            pr["no_stats"] = no_stats.get()
             pr["start_mode"] = start.get()
             pr["app_mode"] = start.get()
             self.theme = collect()
