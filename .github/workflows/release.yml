@@ -54,15 +54,7 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: 스마트PDF Editor ${{ github.event.inputs.tag || github.ref_name }}
-          generate_release_notes: true
-          body: |
-            ## 내려받기
-            **smartpdfeditor.exe** 를 받아 바로 실행하세요 (설치 필요 없음).
-            처음 실행할 때 SmartScreen 경고가 나오면 「추가 정보 → 실행」을 누르세요.
-
-            - 사용방법: 프로그램에서 F1
-            - 스마트공: https://smartgong.kr
-            - 라이선스: AGPL-3.0 (이 릴리스의 소스 코드는 아래 Source code에 포함)
+          body_path: docs/release-notes.md
           files: |
             dist/smartpdfeditor.exe
             LICENSE

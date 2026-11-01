@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/icon.png" width="96" alt="스마트PDF Editor 아이콘"></p>
+
 # 스마트PDF Editor (smartpdfeditor)
 
 PDF를 보면서 **바로 글자를 고치고**, 색칠·감추기·도형·메모·캡쳐까지 할 수 있는 Windows용 PDF 뷰어입니다.
@@ -5,7 +7,8 @@ PDF를 보면서 **바로 글자를 고치고**, 색칠·감추기·도형·메�
 
 ## 내려받기
 
-[**Releases**](https://github.com/nunco-git/smartpdfeditor/releases)에서 `smartpdfeditor.exe`를 받아 실행하면 됩니다. 설치는 필요 없습니다.
+- **바로 받기**: https://smartgong.kr/download/smart-pdf-editor (항상 최신 버전)
+- 또는 [**Releases**](https://github.com/nunco-git/smartpdfeditor/releases/latest)에서 `smartpdfeditor.exe` 를 받아 실행하세요. 설치는 필요 없습니다.
 
 > 처음 실행할 때 Windows SmartScreen 경고가 나오면 「추가 정보 → 실행」을 누르세요.
 
