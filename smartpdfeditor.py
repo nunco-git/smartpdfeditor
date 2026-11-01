@@ -270,7 +270,8 @@ HELP_SECTIONS = [
         "더블클릭하면 열기(북마크는 그 쪽·그 위치로). 폴더를 만들고 끌어서 정리합니다.",
         "줄 끝 × 로 바로 삭제 · 오른쪽 클릭: 열기 · 이름 바꾸기(F2) · 삭제 · 새 폴더",
         "Ctrl·Shift+클릭으로 여러 개 골라 Delete로 한꺼번에 삭제, Ctrl+A 전체 선택",
-        "[최근] 탭: 최근 본 파일 200개 · 마지막으로 본 쪽 · 열어본 시각",
+        "목록 위 🔍 칸에 입력하면 이름·경로(북마크는 쪽 번호도)로 바로 걸러 보입니다. Esc로 지우기",
+        "[최근] 탭: 최근 본 파일 200개 · 마지막으로 본 쪽 · 열어본 시각 — 🔍 칸으로 파일 이름·날짜 찾기",
         ("주", "모두 자동으로 저장됩니다: %APPDATA%\\smartpdfeditor\\settings.json  (파일은 경로만 기억하므로 옮기면 회색으로 표시)"),
     ]),
     ("설정·화면 꾸미기", "gear", [
@@ -402,6 +403,44 @@ def contains_node(root, node):
 
 
 # ───────────────── 폴더가 있는 목록 (즐겨찾기·북마크 공용) ─────────────────
+class FilterBox(ttk.Frame):
+    """목록 위 검색칸: 입력하는 대로 이름·경로로 걸러 보임 (Esc = 지우기)"""
+
+    def __init__(self, master, on_change, hint="이름·경로로 찾기"):
+        super().__init__(master)
+        self.var = tk.StringVar()
+        ttk.Label(self, text="🔍").pack(side="left", padx=(0, 2))
+        self.entry = ttk.Entry(self, textvariable=self.var)
+        self.entry.pack(side="left", fill="x", expand=True)
+        self.count = ttk.Label(self, foreground="#666")
+        self.count.pack(side="left", padx=(4, 0))
+        self.clear_btn = ttk.Button(self, text="✕", width=2, command=self.clear)
+        self.clear_btn.pack(side="left", padx=(2, 0))
+        Tooltip(self.entry, hint + " (여러 낱말은 띄어 쓰면 모두 들어간 것만, Esc 지우기)")
+        Tooltip(self.clear_btn, "검색 지우기")
+        self.entry.bind("<Escape>", lambda e: (self.clear(), "break")[1])
+        self.var.trace_add("write", lambda *a: on_change())
+
+    def words(self):
+        return self.var.get().lower().split()
+
+    def match(self, *texts):
+        w = self.words()
+        if not w:
+            return True
+        hay = " ".join(t or "" for t in texts).lower()
+        return all(x in hay for x in w)
+
+    def clear(self):
+        self.var.set("")
+
+    def show_count(self, n, total=None):
+        if self.words():
+            self.count.config(text=f"{n}개" + (f"/{total}" if total is not None else ""))
+        else:
+            self.count.config(text="")
+
+
 class TreePanel(ttk.Frame):
     """data: 노드 리스트. 노드 = {"type":"folder","name","open","children"} 또는 항목
     on_add(): 새 항목 dict 반환(없으면 None) / on_activate(node): 더블클릭 / label(node): 표시 글자"""
@@ -419,6 +458,8 @@ class TreePanel(ttk.Frame):
         db = ttk.Button(bar, text="삭제", width=4, command=self.delete)
         db.pack(side="left", padx=2)
         Tooltip(db, "선택한 항목 삭제 (Ctrl·Shift+클릭으로 여러 개 선택, Ctrl+A 전체 선택)")
+        self.filter = FilterBox(self, lambda: self.refresh())
+        self.filter.pack(fill="x", pady=(0, 3))
         self.tv = ttk.Treeview(self, show="tree", selectmode="extended", columns=("x",))
         self.tv.column("#0", stretch=True, width=180)
         self.tv.column("x", width=24, minwidth=24, stretch=False, anchor="center")   # 줄 끝 × (삭제)
@@ -451,23 +492,41 @@ class TreePanel(ttk.Frame):
         self.tv.delete(*self.tv.get_children())
         self.map = {}
         sel_iid = None
+        flt = getattr(self, "filter", None)
+        searching = bool(flt and flt.words())
+        found = 0
 
         def put(parent, nodes):
-            nonlocal sel_iid
+            """넣은(검색에 맞는) 항목 수를 돌려줌. 검색 중에는 맞는 항목과 그 폴더만 보임"""
+            nonlocal sel_iid, found
+            shown = 0
             for n in nodes:
                 if n.get("type") == "folder":
-                    iid = self.tv.insert(parent, "end", text="📁 " + n.get("name", "폴더"), open=n.get("open", True),
-                                         values=("✕",))
+                    iid = self.tv.insert(parent, "end", text="📁 " + n.get("name", "폴더"),
+                                         open=True if searching else n.get("open", True), values=("✕",))
                     self.map[iid] = (n, nodes)
-                    put(iid, n.setdefault("children", []))
+                    inner = put(iid, n.setdefault("children", []))
+                    if searching and not inner and not flt.match(n.get("name")):
+                        self.tv.delete(iid)          # 맞는 것이 없는 폴더는 숨김
+                        del self.map[iid]
+                        continue
+                    shown += max(inner, 1)
                 else:
+                    if searching and not flt.match(n.get("name"), n.get("path"),
+                                                   f"{int(n.get('page', -1)) + 1}쪽" if "page" in n else ""):
+                        continue
                     miss = n.get("path") and not os.path.exists(n["path"])
                     iid = self.tv.insert(parent, "end", text=self.label(n), tags=("missing",) if miss else (),
                                          values=("✕",))
                     self.map[iid] = (n, nodes)
+                    shown += 1
+                    found += 1
                 if n is select:
                     sel_iid = iid
+            return shown
         put("", self.data)
+        if flt:
+            flt.show_count(found, count_items(self.data))
         if sel_iid:
             self.tv.selection_set(sel_iid)
             self.tv.see(sel_iid)
@@ -612,6 +671,8 @@ class TreePanel(ttk.Frame):
         m.tk_popup(e.x_root, e.y_root)
 
     def _set_open(self, val):
+        if getattr(self, "filter", None) and self.filter.words():
+            return              # 검색 중에 펼친 상태는 저장하지 않음
         iid = self.tv.focus()
         if iid in self.map:
             self.map[iid][0]["open"] = val
@@ -1483,6 +1544,8 @@ class RecentPanel(ttk.Frame):
         self.info = ttk.Label(bar, foreground="#666")
         self.info.pack(side="left")
         ttk.Button(bar, text="모두 지우기", command=app.clear_recent).pack(side="right")
+        self.filter = FilterBox(self, lambda: self.refresh(), "파일 이름·경로로 찾기")
+        self.filter.pack(fill="x", pady=(0, 3))
         self.tv = ttk.Treeview(self, columns=("page", "time"), show="tree headings", selectmode="browse")
         self.tv.heading("#0", text="파일")
         self.tv.heading("page", text="쪽")
@@ -1511,13 +1574,18 @@ class RecentPanel(ttk.Frame):
     def refresh(self):
         self.tv.delete(*self.tv.get_children())
         conf = self.app.conf
+        n = 0
         for p in conf["recent"]:
             t = conf.get("recent_time", {}).get(p, "")
+            if not self.filter.match(os.path.basename(p), p, t):
+                continue
+            n += 1
             pg = conf["last_page"].get(p)
             self.tv.insert("", "end", iid=p, text="📄 " + os.path.basename(p),
                            values=("" if pg is None else pg + 1, t[5:] if len(t) > 5 else t),
                            tags=() if os.path.exists(p) else ("missing",))
         self.info.config(text=f"{len(conf['recent'])} / {self.app.limit('recent_max')}개")
+        self.filter.show_count(n, len(conf["recent"]))
 
     def sel(self):
         s = self.tv.selection()

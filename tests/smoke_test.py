@@ -519,6 +519,45 @@ fp.select_all()
 check(len(fp.tv.selection()) == 2, "Ctrl+A 전체 선택")
 fp.delete()
 check(fp.data == [], "전체 삭제")
+
+step("즐겨찾기·북마크·최근 목록 검색")
+fp.data[:] = [{"type": "file", "name": "예산 보고서", "path": "C:/문서/2026/예산.pdf"},
+              {"type": "file", "name": "회의록", "path": "C:/문서/회의/1월.pdf"},
+              {"type": "folder", "name": "계약", "children": [
+                  {"type": "file", "name": "근로계약서", "path": "C:/계약/근로.pdf"},
+                  {"type": "file", "name": "임대차", "path": "C:/계약/임대.pdf"}]}]
+fp.refresh()
+fp.filter.var.set("계약서")
+pump(0.1)
+names = [fp.map[i][0]["name"] for i in fp.map]
+check(names == ["계약", "근로계약서"], f"폴더 안 항목 찾기 {names}")
+fp.filter.var.set("문서 2026")
+pump(0.1)
+names = [fp.map[i][0]["name"] for i in fp.map]
+check(names == ["예산 보고서"], f"경로로·여러 낱말 찾기 {names}")
+check(fp.filter.count.cget("text") == "1개/4", f"찾은 개수 표시 {fp.filter.count.cget('text')}")
+fp.filter.clear()
+pump(0.1)
+check(len(fp.map) == 5, "검색 지우면 전체")
+bp = app.bm_panel
+bp.data[:] = [{"type": "mark", "name": "중요 표", "path": pdf1, "page": 11},
+              {"type": "mark", "name": "결론", "path": pdf1, "page": 2}]
+bp.refresh()
+bp.filter.var.set("12쪽")
+pump(0.1)
+check([bp.map[i][0]["name"] for i in bp.map] == ["중요 표"], "북마크 쪽 번호로 찾기")
+bp.filter.clear()
+rp = app.recent_panel
+rp.refresh()
+total = len(rp.tv.get_children())
+rp.filter.var.set("sample2")
+pump(0.1)
+check(len(rp.tv.get_children()) == 1 and total >= 2, f"최근 파일 찾기 {total}→{len(rp.tv.get_children())}")
+rp.filter.clear()
+fp.data[:] = []
+bp.data[:] = []
+fp.refresh()
+bp.refresh()
 shot("8_favorites_x")
 
 step("폴더에서 PDF 찾기 (본문)")
