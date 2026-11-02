@@ -1,0 +1,30 @@
+name: tmp-shot
+on: workflow_dispatch
+jobs:
+  shot:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          pip install --only-binary=:all: "pymupdf>=1.24,<2" pillow
+      - run: |
+          @'
+          import sys, os, base64, io, tempfile, time
+          sys.path.insert(0, os.getcwd())
+          import tkinter as tk
+          import smartpdfeditor as S
+          S.CONF_DIR = tempfile.mkdtemp(); S.CONF_FILE = os.path.join(S.CONF_DIR, "s.json")
+          S.AD_URL = ""; S.FIREBASE_DB_URL = ""
+          root = tk.Tk(); app = S.App(root, [], listen=False)
+          root.geometry("1100x760+0+0"); root.update()
+          root.after(800, app.show_help)
+          def grab():
+              from PIL import ImageGrab
+              img = ImageGrab.grab(); b = io.BytesIO(); img.save(b, "PNG")
+              print("B64:" + base64.b64encode(b.getvalue()).decode()); root.destroy(); os._exit(0)
+          root.after(3000, grab); root.mainloop()
+          '@ | Set-Content shot.py -Encoding utf8
+          python shot.py | Select-String "^B64:" | ForEach-Object { $_.Line } | Set-Content b64.txt
+          $s = Get-Content b64.txt -Raw; for ($i=0; $i -lt $s.Length; $i+=4000) { "L:" + $s.Substring($i, [Math]::Min(4000, $s.Length-$i)) }
