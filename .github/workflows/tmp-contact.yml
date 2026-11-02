@@ -1,0 +1,37 @@
+name: tmp-contact
+on:
+  push:
+    branches: [test-contact]
+jobs:
+  t:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python -m pip install --only-binary=:all: -r requirements.txt pillow
+      - env: { PYTHONIOENCODING: utf-8 }
+        run: |
+          @'
+          import os, sys, io, base64, time, tempfile
+          sys.path.insert(0, os.getcwd())
+          import tkinter as tk, smartpdfeditor as S
+          S.CONF_DIR = tempfile.mkdtemp(); S.CONF_FILE = os.path.join(S.CONF_DIR, "s.json"); S.AD_URL = ""; S.FIREBASE_DB_URL = ""
+          root = tk.Tk(); app = S.App(root, [], listen=False); root.geometry("1100x760+0+0")
+          def shot(name, bbox):
+              from PIL import ImageGrab
+              for _ in range(8): root.update(); time.sleep(0.12)
+              img = ImageGrab.grab(bbox=bbox); b = io.BytesIO(); img.save(b, "PNG"); s = base64.b64encode(b.getvalue()).decode()
+              for i in range(0, len(s), 4000): print("IMG%s:%s" % (name, s[i:i+4000]), flush=True)
+          def go():
+              app.show_help(); w = app._help
+              for _ in range(8): root.update(); time.sleep(0.1)
+              x, y = w.winfo_rootx(), w.winfo_rooty()
+              shot("help", (x - 8, y - 32, x + w.winfo_width() + 8, y + 260))
+              w.destroy()
+              m = app.menubar
+              print("MENUS", [k for k in dir(m) if "menu" in k.lower()][:20], flush=True)
+              os._exit(0)
+          root.after(1500, go); root.mainloop()
+          '@ | Set-Content t.py -Encoding utf8
+          python t.py

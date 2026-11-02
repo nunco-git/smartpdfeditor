@@ -96,6 +96,7 @@ FONT_FIRST = ("맑은 고딕", "Malgun Gothic", "나눔고딕", "NanumGothic", "
 AD_W, AD_H = 250, 250     # 광고창 기본 크기 (사이드바 폭에 맞춘 정사각형 배너)
 AD_FILES = ("ad.png", "ad.gif", "ad.jpg", "ad.jpeg")   # 실행파일 옆에 두면 이 광고가 우선 (시험용)
 AD_LINK_FILE = "ad.txt"   # 첫 줄 = 광고 클릭 시 열 주소
+CONTACT_EMAIL = "smartgongmaster@gmail.com"   # 오류·개선 제안 받는 주소
 AD_URL = "https://smartgong.kr/ads/smartpdfeditor.json"   # 인터넷 광고 설정
 # 사용 통계 — 설치된 컴퓨터 수만 셉니다. 보내는 것: 무작위 번호 + 프로그램 버전 (하루 한 번)
 # 환경설정 → 일반 → 「사용 통계 보내지 않기」로 끌 수 있습니다.
@@ -112,7 +113,7 @@ def stats_call(url, method, body):
         r.read()
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.5"
+APP_VER = "1.0.6"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -2442,6 +2443,8 @@ class App:
         hm2.add_command(label="새 버전 내려받기", command=lambda: webbrowser.open(RELEASES_URL))
         hm2.add_separator()
         hm2.add_command(label="정보 · 라이선스", command=self.show_about)
+        hm2.add_separator()
+        hm2.add_command(label=f"오류 · 개선 제안: {CONTACT_EMAIL}  (주소 복사)", command=self.copy_contact)
         mb.add_cascade(label="도움말", menu=hm2)
 
     def _build_ui(self):
@@ -2912,6 +2915,17 @@ class App:
         ttk.Button(frm, text="닫기", command=dlg.destroy).pack(pady=(14, 0))
         dlg.bind("<Escape>", lambda e: dlg.destroy())
 
+    def copy_contact(self, parent=None):
+        """오류·개선 제안 메일 주소를 클립보드에 복사"""
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(CONTACT_EMAIL)
+        except tk.TclError:
+            pass
+        messagebox.showinfo(APP, f"메일 주소를 복사했습니다.\n\n{CONTACT_EMAIL}\n\n"
+                                 "메일 받는 사람 칸에 붙여넣어(Ctrl+V) 오류나 개선할 점을 보내 주세요.",
+                            parent=parent or self.root)
+
     def show_help(self, section=None):
         """사용방법: 왼쪽 목차를 누르면 오른쪽 내용이 그 부분으로 이동"""
         if getattr(self, "_help", None) and self._help.winfo_exists():
@@ -2940,6 +2954,17 @@ class App:
         tk.Label(head, text=f"버전 {APP_VER}", bg="#fff6e8", fg="#8a6d3b", font=(fam, fs - 1)).pack(
             side="left", padx=8, pady=(14, 8))
         tk.Frame(dlg, bg=acc, height=3).pack(fill="x")
+        cf = tk.Frame(dlg, bg="#fffdf7")
+        cf.pack(fill="x")
+        tk.Label(cf, text="✉  사용하다가 오류나 개선할 점이 있으면", bg="#fffdf7", fg="#3e2a00",
+                 font=(fam, fs)).pack(side="left", padx=(14, 4), pady=6)
+        ml = tk.Label(cf, text=CONTACT_EMAIL, bg="#fffdf7", fg="#1565c0", cursor="hand2",
+                      font=(fam, fs, "bold", "underline"))
+        ml.pack(side="left", pady=6)
+        ml.bind("<Button-1>", lambda e: self.copy_contact(parent=dlg))
+        tk.Label(cf, text="으로 알려 주세요. (누르면 주소 복사)", bg="#fffdf7", fg="#3e2a00",
+                 font=(fam, fs)).pack(side="left", padx=4, pady=6)
+        tk.Frame(dlg, bg="#eadfcd", height=1).pack(fill="x")
 
         bot = ttk.Frame(dlg, padding=(10, 6))
         bot.pack(side="bottom", fill="x")
