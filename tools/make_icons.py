@@ -68,6 +68,16 @@ def icons(S):
     d.polygon(P(10.2, 18.8, 11, 16.2, 12.8, 18), fill=S)
     out["save_as"] = im
 
+    # 인쇄: 프린터
+    im, d = new()
+    rr(d, (5, 2, 15, 8), 0.8, fill="#ffffff", outline=S, width=int(1.3 * K))
+    rr(d, (1.5, 7, 18.5, 14.5), 2, fill=S)
+    d.ellipse(P(14.6, 9, 16.2, 10.6), fill=GREEN)
+    rr(d, (5, 11.5, 15, 18), 0.8, fill="#ffffff", outline=S, width=int(1.3 * K))
+    d.line(P(7, 14, 13, 14), fill=BLUE, width=int(1.1 * K))
+    d.line(P(7, 16, 11.5, 16), fill=BLUE, width=int(1.1 * K))
+    out["print"] = im
+
     # 되돌리기
     im, d = new()
     d.arc(P(4, 5, 17, 17), 200, 450, fill=S, width=W)

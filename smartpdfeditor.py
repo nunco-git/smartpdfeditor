@@ -117,7 +117,7 @@ def stats_call(url, method, body):
         r.read()
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.9"
+APP_VER = "1.0.10"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -226,6 +226,7 @@ HELP_SECTIONS = [
         "다시 열면 마지막으로 보던 쪽에서 이어집니다.",
         ("소", "저장 · 되돌리기"),
         "Ctrl+S — 지금 파일에 바로 저장합니다. (덮어쓰기)",
+        "Ctrl+P — 인쇄. Windows 인쇄 창에서 프린터·쪽 범위·매수를 고릅니다. 고친 글자·메모·색칠도 화면에 보이는 그대로 인쇄되고, 가로 쪽은 돌려서 종이에 맞춥니다.",
         "Ctrl+Shift+S — 다른 이름으로 저장. 원본을 남기고 싶으면 이것으로 새 이름을 정하세요. 저장한 뒤 탭은 새 파일을 가리킵니다.",
         "Ctrl+Z — 되돌리기 (최근 30번까지). 저장하지 않은 탭 이름 앞에는 ● 표시가 붙습니다.",
     ]),
@@ -972,6 +973,128 @@ def page_photo(page, zoom):
     return tk.PhotoImage(data=pix.tobytes("ppm"))
 
 
+# ───────────────────────── 인쇄 (Windows) ─────────────────────────
+_print_api = {}
+
+
+def _print_lib():
+    if "pd" in _print_api:
+        return _print_api
+    import ctypes
+    from ctypes import wintypes as wt
+
+    class PRINTDLGW(ctypes.Structure):
+        _fields_ = [("lStructSize", wt.DWORD), ("hwndOwner", wt.HWND), ("hDevMode", ctypes.c_void_p),
+                    ("hDevNames", ctypes.c_void_p), ("hDC", ctypes.c_void_p), ("Flags", wt.DWORD),
+                    ("nFromPage", wt.WORD), ("nToPage", wt.WORD), ("nMinPage", wt.WORD), ("nMaxPage", wt.WORD),
+                    ("nCopies", wt.WORD), ("hInstance", ctypes.c_void_p), ("lCustData", ctypes.c_ssize_t),
+                    ("lpfnPrintHook", ctypes.c_void_p), ("lpfnSetupHook", ctypes.c_void_p),
+                    ("lpPrintTemplateName", ctypes.c_wchar_p), ("lpSetupTemplateName", ctypes.c_wchar_p),
+                    ("hPrintTemplate", ctypes.c_void_p), ("hSetupTemplate", ctypes.c_void_p)]
+
+    class DOCINFOW(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_int), ("lpszDocName", ctypes.c_wchar_p), ("lpszOutput", ctypes.c_wchar_p),
+                    ("lpszDatatype", ctypes.c_wchar_p), ("fwType", wt.DWORD)]
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [("biSize", wt.DWORD), ("biWidth", ctypes.c_long), ("biHeight", ctypes.c_long),
+                    ("biPlanes", wt.WORD), ("biBitCount", wt.WORD), ("biCompression", wt.DWORD),
+                    ("biSizeImage", wt.DWORD), ("biXPelsPerMeter", ctypes.c_long), ("biYPelsPerMeter", ctypes.c_long),
+                    ("biClrUsed", wt.DWORD), ("biClrImportant", wt.DWORD)]
+
+    gdi, cd, k32 = ctypes.windll.gdi32, ctypes.windll.comdlg32, ctypes.windll.kernel32
+    gdi.StartDocW.argtypes = [ctypes.c_void_p, ctypes.POINTER(DOCINFOW)]
+    for f in ("StartPage", "EndPage", "EndDoc", "AbortDoc", "DeleteDC"):
+        getattr(gdi, f).argtypes = [ctypes.c_void_p]
+    gdi.GetDeviceCaps.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    gdi.StretchDIBits.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                  ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p,
+                                  ctypes.POINTER(BITMAPINFOHEADER), ctypes.c_uint, wt.DWORD]
+    gdi.SetStretchBltMode.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    gdi.CreateDCW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_void_p]
+    gdi.CreateDCW.restype = ctypes.c_void_p
+    cd.PrintDlgW.argtypes = [ctypes.POINTER(PRINTDLGW)]
+    k32.GlobalFree.argtypes = [ctypes.c_void_p]
+    _print_api.update(pd=PRINTDLGW, di=DOCINFOW, bih=BITMAPINFOHEADER, gdi=gdi, cd=cd, k32=k32, ct=ctypes)
+    return _print_api
+
+
+def ask_printer(owner_hwnd, n_pages, cur_page):
+    """Windows 인쇄 창 (프린터·쪽 범위·매수). → (프린터 DC, [쪽 번호들]) 또는 None"""
+    api = _print_lib()
+    ct = api["ct"]
+    pd = api["pd"]()
+    pd.lStructSize = ct.sizeof(api["pd"])
+    pd.hwndOwner = owner_hwnd
+    pd.Flags = 0x100 | 0x4 | 0x40000            # RETURNDC | NOSELECTION | USEDEVMODECOPIESANDCOLLATE
+    pd.nMinPage, pd.nMaxPage = 1, max(1, n_pages)
+    pd.nFromPage = pd.nToPage = cur_page + 1
+    pd.nCopies = 1
+    ok = api["cd"].PrintDlgW(ct.byref(pd))
+    for h in (pd.hDevMode, pd.hDevNames):
+        if h:
+            api["k32"].GlobalFree(h)
+    if not ok or not pd.hDC:
+        return None
+    if pd.Flags & 0x2:                            # PD_PAGENUMS: 쪽 지정
+        a, b = sorted((pd.nFromPage, pd.nToPage))
+        pages = list(range(max(1, a) - 1, min(n_pages, b)))
+    else:
+        pages = list(range(n_pages))
+    return pd.hDC, pages
+
+
+def print_pages(hdc, doc, pages, title="스마트PDF Editor", output=None, progress=None):
+    """프린터 DC에 쪽들을 그림 (고친 내용·메모·색칠 포함). 쪽은 종이에 맞게 줄이고, 가로 쪽은 돌려서 크게"""
+    api = _print_lib()
+    ct, gdi = api["ct"], api["gdi"]
+    di = api["di"]()
+    di.cbSize = ct.sizeof(api["di"])
+    di.lpszDocName = title
+    di.lpszOutput = output
+    if gdi.StartDocW(hdc, ct.byref(di)) <= 0:
+        raise OSError("인쇄를 시작하지 못했습니다 (프린터 확인)")
+    try:
+        pw, ph = gdi.GetDeviceCaps(hdc, 8), gdi.GetDeviceCaps(hdc, 10)          # 인쇄 가능 영역(픽셀)
+        dpx, dpy = gdi.GetDeviceCaps(hdc, 88), gdi.GetDeviceCaps(hdc, 90)       # 인치당 점
+        dpi = max(72, min(300, dpx, dpy))         # 그림 해상도 (최대 300dpi)
+        gdi.SetStretchBltMode(hdc, 4)             # HALFTONE
+        for n, pno in enumerate(pages):
+            if progress:
+                progress(n, len(pages))
+            page = doc[pno]
+            r = page.rect
+            rotate = (r.width > r.height) != (pw > ph)        # 가로 쪽을 세로 종이에: 돌려서 크게
+            mat = fitz.Matrix(dpi / 72, dpi / 72)
+            if rotate:
+                mat = mat.prerotate(90)
+            pix = page.get_pixmap(matrix=mat, alpha=False)    # 흰 바탕
+            if pix.n != 3:
+                pix = fitz.Pixmap(fitz.csRGB, pix)
+            rgb = pix.samples
+            buf = bytearray(pix.width * pix.height * 4)          # RGB → BGRX (윈도우 그림 순서, 32비트)
+            buf[0::4], buf[1::4], buf[2::4] = rgb[2::3], rgb[1::3], rgb[0::3]
+            bih = api["bih"]()
+            bih.biSize = ct.sizeof(api["bih"])
+            bih.biWidth, bih.biHeight = pix.width, -pix.height   # 위에서 아래로
+            bih.biPlanes, bih.biBitCount, bih.biCompression = 1, 32, 0
+            # 종이(인쇄 가능 영역)에 비율 그대로 맞추고 가운데에
+            iw = pix.width * dpx / dpi
+            ih = pix.height * dpy / dpi
+            k = min(pw / iw, ph / ih)
+            dw, dh = int(iw * k), int(ih * k)
+            x0, y0 = (pw - dw) // 2, (ph - dh) // 2
+            if gdi.StartPage(hdc) <= 0:
+                raise OSError("쪽 인쇄를 시작하지 못했습니다")
+            cbuf = (ct.c_char * len(buf)).from_buffer(buf)
+            gdi.StretchDIBits(hdc, x0, y0, dw, dh, 0, 0, pix.width, pix.height, cbuf, ct.byref(bih), 0, 0x00CC0020)
+            gdi.EndPage(hdc)
+        gdi.EndDoc(hdc)
+    except Exception:
+        gdi.AbortDoc(hdc)
+        raise
+
+
 # ───────────────────────── 한글 입력(IME) ─────────────────────────
 _ime = {}
 
@@ -1258,6 +1381,7 @@ ICON_DATA = {
         "open": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAB4ElEQVR42s2UPWvUQRDGf7O7/3vJ5S6JGlNoJYithYWIkHwA29R+BW21OPIJ/A4iiIWFoIWV0QNtDHaWmkKDBIx54XK52//uY5FcopiEC0ZwYGBgZ5955pnZhf/dbBjo1Wz443RxLtvCQj7VimrjTpIf9tjVeivc8Y5aSqasrMZ44bqb8ZndfvNB7bYblakB6PnNqf6WX6u2KhAFCIIjbse1MuZb9Svd93y6ZEyvHg069zqZoV3doldK+j7YjBNlkkAGpFo9TMWoq3Zt6R0sjd7yMDYjADIzk/BlzBi61300e8EZ5WH0JKkxFtgp48PafGc5HD4JYYaVpagEuxjq4f6RlLKgESi/9TpmfA6HyurDvsCDjAZd0jFd5ppwRWu6vv727pnwG1BO+OnL+NYMpBLMhrjhON2SlKuN+mPXi08PEpWxooZrngfzEE6wfsrgfdNZfLl3axJywhpnwReQE0gjuXJW8N6l7f6PvnY6BzScxzVnQL8+yFE22bKNVQB1GjcefHUA68uLWL2VrNpMqEzCkmAkR0pAwipP9vfQdjbMNWcmaY65YtAHO4F+WZ7CiGtfVvYBJ67Px1g594Kt7fFYJg3HOwIauJCL3rpLqx83/vF/qLb7O6QF2e5IT9d+Akb68RwAWZn8AAAAAElFTkSuQmCC",
         "save": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACkklEQVR42rWUwWtcVRTGf9+5981MxmliLcFViQgVa1GQ2YgrF67cuTCEdinUhUt3boII0Y1/gK5cdNEm+AeUClXahYUOiEVBsLEl1raBTpuUTiZ5993jYiYxyUxiKXjgbg7nfu98v3veEbtj3o27nXC2DWfbbTqMRhvo0OGjb6Ddhs73y5ml2Wq00l08a+y6G3cSkr+6cPOVVR2dPf26hTNvHtGjfh4WAAatmlGLcHW5zxeX17xRxKosNy/dka6BC+SReTeEz3z598mtonbFaB5rtOpMPQ++aZggAP0EX11xTkyLUy828TpYIWKsf3584a+5lU91gUUP1r7bCSDPuZrTxNSx/Ph+v7/+KK11q7TWLdNat0zrD8vUfbCVfvj1Trr++2raWO+l3Oum1Ov2JeHGxwAsLf3rCJlTlY4UQTEjHOGA77gWSENkQiA8I6ncy3BHVHKgCOK5mihdhKFlE7w10+DEdEERdr+fwNFYQXeIJu49Tlxf2eRJmbFdd9872aQWxW/3tog2/sH3CGZ3GoW4+mefH5c32D9Heeg9mmgUoqp8pCbu/4IEG6WzVfnouA0M4jgmmKzp8A5N0Cudd15u8PZMnezssbzdpQluPUx8d6OHHSRoBinDVN34+v0XODph//mD3HyQuLbqtOxAhjBRCNNA3H2AgDEso8FkXQOuOoRh9gGraIcLmmAMZsb6etotocPGRu4O7nKq7e1xUIc+tCmo9mtb593lDBALv0iV5I3JenMiBCCYEWD0hGE+11o1q7dCUHUOgNemFZmdrZh3++MT/fTSwu25++nIh0u/KJx+o6k8hsl27sZq6T+v9Kriycb5M+Xxbz8brMDE/xuLHlj04P5054NFD8xf3jMp/wA5AC7ymd2FVAAAAABJRU5ErkJggg==",
         "save_as": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADU0lEQVR42pWUT2hcVRTGf+feOzP5PzOxIRKigmizUYrMwiCRgQoW0Vq6MFREcJG2IUG6cOE/JIogCEVFEKzRnVA62dSFgmCtpVjUGEFEm4WJEWtbU9NJ0kwymffuPS7eRCc1UXrgPO57vPNxvnO/7wgbMaam0DNlDxUKbBUF4PDUFFMA+UJgUDzbhqpwo7FNjWNszCASdozN7Ozqumnw9QdbbGtKJAZMAAx0pA0YeOnjBf1+ISWtVM7OipxCVRDRRkABlduOXuyLffrLfD7X+fajjo4miANYgaqHN88ou+8UzswEvpit0u4CUWXpwG8v9J6gpLaRvgNRjS4MurZcZ7w8X10q73AhI8QBnIFKpHz+wzw3uzbCaky8Uo01l8uo6Chwgh/RzZQBxKj6SBFxzohLGUFIAJ2BppQh4wwigoCgQUQk2nqGf5NPhrFSUwSIFYyAD8qRgSy9OcdPf9SwZmNSyH8CGgNrUeDVz65irvu1yQk+wPJ6oNkJqv+wPLYXe+hl1Xo/DR0CCvy+FBMFkPp7ohAFhJSFbFoalKNGRKLDW3UoApFXHt/VQl9XCtXkW1KYnMtrgQ+/q+CT+YqIhGuqD7TBaUQU1QTQAN5Dvtny1iN5Mm57nU/PR5y9bLi6uL6sqgeILh2PJsffT5uWg4qIaaTrBFYjJQ4Q+USLG1nz4AOknZhLVxZ4ds8tRVZnj6+efMqnyueG1k+NvANqXR1N6w+MJFJppAwQ6rc+f60mI/d380r/hezqyWGI1mxl8c9a60NPjgBll8xPMyCKqte6R68HNIIJ3svwQDf7umeofjSqRGui60txa/GZNL1PnAM+SFRlzWkNsdiWbCbbbC1gjcFCYwYRa9nf8zO1T0cJUTUBG3jasXPoW+BhEfnFMqam/GL7bGdxeHoldtl7e+zcrTk75wNzRpgD5oBfQXpl+bypfHJE8VXR6mIC1ndwEtgjIouqajeu5H/X11dfTx179/n9kZbuW18ZvzvS6fdUVb9R1fyGJjdXlNQ+VlKrqqYxS6VSWkQoFHa91r97r5ae61edGVdVnWwAs//28qD4icSlm9abqkZvTEw0ZxZX7vBrC0c77tp3D7cPddRplutu8Te0nIvFomu0m1453741TfgLa1qdanHi1QcAAAAASUVORK5CYII=",
+        "print": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADNUlEQVR42rVUz2tcVRT+zr33zS+bZIq4EImgLRKjLViwDmMkgYYidiEIgy6qWZQuK4rgSjpkExH9B/wbIriqBJW002hJxLT4K5J2IZFImjHTZmby3syb9+79XLyZMQ0TXYgHLhzuOee73/lxD/DfRP71oitqZmZmeBdA/hCH9fX1cHl5ufVPgAIAhUIhYzJHvoiiznNRFDkRUSD7HiQoIsjmcrvK4uz161/fKZfLanZ21gGAOfAAR0dHs79tbhXef+/dzPFjx0A6iKjESEJEEAQB5j76OL99d/sJAHfW1tb6xMwgxtZa/5nx8fT402McVBbnrBMRiW0cHbSrnlIqlRQADg0NRQKoTqcjAISkdIP6p9VqCwDlHC0AVqvVnu1vhvPz83Z6enqkVqsdFREJggDNvT3QOYh6MGV/zwdJGK1HJs6dO1q5cuX+/hRVqVSSrT/vfSJKnadzmmQ+l8uJ0RqDciYI3w/gnGsorSyIFeWiNyuVSs0AcH9Ua+ezmcw7YRhCJAn3/YTFYaJFQ2k1zJhI5zIvt9v8EMBF033yKeesBeBIGgCitT50lBkCagzwJjTDz2MbNSIR4fF+DUWkA4gmQOlm2GM6CFA0AJ9wWxR0KKJEw0ln0NgkMQIEQYAodoPTVUB2Mwu3QdAAku4WtgdIsntFCxGJrdMnTzyLRx8eSuaqy5ZM1Horxg8//YLYxk4ASxIgsn1ArfVVkh94npcWEbQbTVy69Dbaj4zDbzsYnfw+QYI4NtLBxbdeR223oTzPS2ljYG38ZQ9QLV39arH40tQbXsq74JyklEKx7re8zzaa2N714ZmkQbF1uB8KLr+omNIiURTf9Iyuh+3WtW+uLc7tn7C+Ui6XU6deKO6s3vqRt+7S3dgI+d1mxG9/j3h7x5Ikw1ZgX3n1NXfi1OnCwfr2msLJyUkzNTXlVldvD2sl3k696T79ucqte03JegrNEDg96mHubB5+EDiQRgmGy+WyWllZ8RYWFsKB66tYLB4RL/trPj/y2EMpgeo2RADEDggi1x/8TtR+/kal8v3+9SUDtg0nzpx5MmrHj9d9n6R+wCdjAGMMcql0Y2lp8Sb+b/kLqXCOmnfIMLkAAAAASUVORK5CYII=",
         "undo": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACcklEQVR42s1Uv2tTURT+zn0vL2mqlg5m1dVEUXiD0j778uOVWihuZ3ARXIqC2EFwEh4P/wJF0L1L4Q4dFBxsqzGpEDBTbXCq4KCQRQvaNi/vvuuSaCxpUouD33ju4dzvnPOdD/jfQUfI04MSjUGPzGzkcjnRaDTibsz3fZHJZESj0RhMgZkNAKIfqyyz5TIfs+fm0sM67Ncy+b5PQRDETt4rEeGu1nqSiE7EWkeCqA6ip5W1l4sAVIdE/EdB27bTqdExd8RKb66sPP8EAE5h+kkqad1stcLPsVZlaPoI0uNElLes1Jl2u1X7Fu7NblSrXzt1NAAQMxvZbFavlis100zkoqhdA2jXsqzZKAwXCq7zOAiCuLcFxy15wjSekcaGCndmSqXSdhAEGoAm27YT9Xq9PemW7ltW4oEGYCUs7Hz/sVB9s/qo86loNpsEAJlMRksp1UWnYI+mU+9aYWtx/fXadWY2pJSquww4bsnLT1/RTr54zyl4N3oWRX0WaAHAhFt8eLngac/zxrojNKWUMQBQHG5Gob5WLa8tdR+llOoAUSgAgkDLZiJxZy+MzgJYZ2ZhdodZqVS+AFhiZqPZbFK5XI6GiF0TiTaAmAjJbtDslQsziwGsfmFra0sAUCpWlwxFQrX0BwCQUuq/OVPBzIZt2wkAOOc441PF6W0nX3zb0a7Yz3AYYiklACjHcU4KK/1CCAKpcL43yTysMbjuzCkY+kIcx0UQ5gGo3b1wqlYtv/d9X3S1KoZVc13XAKAVotvJkdSyJtwiQIY7rfO16qs6Mxv7hX9YhqedvOdOTFw9jt/WI/6JifZxpiNBHHQ5vfgJSI33JIoGXTAAAAAASUVORK5CYII=",
         "prev": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABnUlEQVR42sWUQUoDMRSGXzLjdERQREEURbyACqPCTBMz0xmtotts3XgCT1B6Abe6EDxA0aVudBEpVNSIV3DnQhBBcMbWxE0EF7ZMteKD7JIveX/+/wH8cyGz/gT8q8IGgmdnVwY6QXFOmAIATVjpcGhEX/lRNN0O2hHIObcAQBFChkkYnxRcdwshmLEARgEAKpVK/tYNDAghwySKG8n6pqal5KZYjOYMDHcjLgYARSkd11bhyHVdP03TBrTSjXq9/sQ5t2q12nsuDc3Nyl+OF5FdkG6/62fZ62UeWFufUUqnSJg8hMmapmGy63nJUKc2277QiKyVsgcRRmNaqzeF9J2UZ8+MMbtarequDff5imJY2mZJWUer65qweP/LR+EfQ30almmYPMblDV0M4708dmvrI8aYLYRoBYwtWJZz6vQ5o1mWHli6tSOEeDFndVeZ9DyvT0rZ9JfjRdtGx45TmHzL0husWlwIcW+26dxJkVI2OedW4+L8GprZUpamtwhh7x3jka6T8l1qgiCYCBibN0rjXo6sns1ElMfcPa0P9gSXpHPkmh4AAAAASUVORK5CYII=",
         "next": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABlElEQVR42s1UO0/CUBQ+ty1gYDBG2kSNJq6spANQetveBgJxrT/AV2Lioj9Awq+AmPjY2YzBOEGJhkFZ3XFwIHHxMQC3vS6WRZBHjfFbbnJPvnvOud/5DsB/Bz8mzn2d6NczFwoFzg+fAwCkaBrBJHMZN815AADLsviZWrYsixNFkWNIKIUjkRx0KVlZW3+4ub56xhgL7XbbHfUg+uleUZQoCKGLUGgu3+v1XqjTzTUbjft4PB5otVr9adseJEtppESyeZbWzU5CJfKk7Q/9S4+oYFI2cxssbWTeE6q+5Uco5BEVjRypuvmhmVmW0vXNYZVOkoHV63UOAMB1ockYvPGCAMDQKgBAp9NBk4gygCdAEuu7wUDwBCEEvX63vCxGD2KxGCsWi+7Uw5zSjG1sZhkmGaboZG8W9yCPkFSNY0wyTDOzLImNnXEK86MqkySJW5CWTsPh8KFD6atD+/t3du0MYyxUq1VnnPm/oVKpMGDuI6X9J5dR49aunWOMBdu2qa+lIMvyop9BHuEWf5tmUr//DT4BRbWLzZVelJYAAAAASUVORK5CYII=",
@@ -1297,6 +1421,7 @@ ICON_DATA = {
         "open": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAB4ElEQVR42s2UPWvUQRDGf7O7/3vJ5S6JGlNoJYithYWIkHwA29R+BW21OPIJ/A4iiIWFoIWV0QNtDHaWmkKDBIx54XK52//uY5FcopiEC0ZwYGBgZ5955pnZhf/dbBjo1Wz443RxLtvCQj7VimrjTpIf9tjVeivc8Y5aSqasrMZ44bqb8ZndfvNB7bYblakB6PnNqf6WX6u2KhAFCIIjbse1MuZb9Svd93y6ZEyvHg069zqZoV3doldK+j7YjBNlkkAGpFo9TMWoq3Zt6R0sjd7yMDYjADIzk/BlzBi61300e8EZ5WH0JKkxFtgp48PafGc5HD4JYYaVpagEuxjq4f6RlLKgESi/9TpmfA6HyurDvsCDjAZd0jFd5ppwRWu6vv727pnwG1BO+OnL+NYMpBLMhrjhON2SlKuN+mPXi08PEpWxooZrngfzEE6wfsrgfdNZfLl3axJywhpnwReQE0gjuXJW8N6l7f6PvnY6BzScxzVnQL8+yFE22bKNVQB1GjcefHUA68uLWL2VrNpMqEzCkmAkR0pAwipP9vfQdjbMNWcmaY65YtAHO4F+WZ7CiGtfVvYBJ67Px1g594Kt7fFYJg3HOwIauJCL3rpLqx83/vF/qLb7O6QF2e5IT9d+Akb68RwAWZn8AAAAAElFTkSuQmCC",
         "save": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACkklEQVR42rWUwWtcVRTGf9+5981MxmliLcFViQgVa1GQ2YgrF67cuTCEdinUhUt3boII0Y1/gK5cdNEm+AeUClXahYUOiEVBsLEl1raBTpuUTiZ5993jYiYxyUxiKXjgbg7nfu98v3veEbtj3o27nXC2DWfbbTqMRhvo0OGjb6Ddhs73y5ml2Wq00l08a+y6G3cSkr+6cPOVVR2dPf26hTNvHtGjfh4WAAatmlGLcHW5zxeX17xRxKosNy/dka6BC+SReTeEz3z598mtonbFaB5rtOpMPQ++aZggAP0EX11xTkyLUy828TpYIWKsf3584a+5lU91gUUP1r7bCSDPuZrTxNSx/Ph+v7/+KK11q7TWLdNat0zrD8vUfbCVfvj1Trr++2raWO+l3Oum1Ov2JeHGxwAsLf3rCJlTlY4UQTEjHOGA77gWSENkQiA8I6ncy3BHVHKgCOK5mihdhKFlE7w10+DEdEERdr+fwNFYQXeIJu49Tlxf2eRJmbFdd9872aQWxW/3tog2/sH3CGZ3GoW4+mefH5c32D9Heeg9mmgUoqp8pCbu/4IEG6WzVfnouA0M4jgmmKzp8A5N0Cudd15u8PZMnezssbzdpQluPUx8d6OHHSRoBinDVN34+v0XODph//mD3HyQuLbqtOxAhjBRCNNA3H2AgDEso8FkXQOuOoRh9gGraIcLmmAMZsb6etotocPGRu4O7nKq7e1xUIc+tCmo9mtb593lDBALv0iV5I3JenMiBCCYEWD0hGE+11o1q7dCUHUOgNemFZmdrZh3++MT/fTSwu25++nIh0u/KJx+o6k8hsl27sZq6T+v9Kriycb5M+Xxbz8brMDE/xuLHlj04P5054NFD8xf3jMp/wA5AC7ymd2FVAAAAABJRU5ErkJggg==",
         "save_as": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADSUlEQVR42pWUT2hcVRTGf+feOzPJ5M/MxIZIiIoLm1URmYUuIgEFi/gPF4aKCC76JySIiAtBkVEKgiAoiotquxCE0qyq4KJgHUuwC2OEItaIZJyaaDVtOkmamczMe+8eF29GpyGp9MB53Pd45+N83/3OEdpRUJMfnreH83l2ijxwZH6eeYBc3jMhEbuGqnCrsUuNo1AwiPg9hcW9g4O3TbzzSNr2JERCwHjAQH/SgIE3vlzVC6sJ6aE6WxI5i6ogop2AAip3vfvnaBglv83lsgMfPOno74LQgxWoR/DeOeWhe4Rzi55vSnX6nCeorh9Yem3kFDNqO+k7ENVgecL1ZgfCjZX6emWP8ykh9OAMVAPl6x9XuN314msh4WY91Gw2paLTwCl+Qm+kDCBGNQoUEeeMuIQRhBjQGehKGFLOICIICOpFRIKdNfyXfCzGZlMRIFQwApFXXhrLMJJ1XPy7iTVtpZCbAhoDW4Hn6FfXMNt+7XJC5GGj4el2gup/LI89gT38pmqrn44OAQX+WA8JPEjrPXaIAkLCQiYpHc5RIyLBkZ06FIEgUp69N83oYALV+FtcGJ8rW57PfqgSxfqKiPjrqg/3QhERRTUGNEAUQa7b8v7jOVJud58vrATM/mW4ttbYUNUDBJdPBnOfHE+a9CFFxHTSdQK1QAk9BFHsxXY2I4g8JJ2Yy1dWeXX/HePUSidrp1+IEpXzBxtnpz4Cta6Fpq0HRmKrdFIG8K1bX7nelKkHh3jrgeVM7fQkBFu2una12fPo81NAxcX6aQpEUY20NaPbAY1gfBTJ5NgQTw0tUv98Wgm2RBvrYc/4K0lGnjsPnIhdZU1RfSg2nUlluq0FrDFY6EwvxlqeHl6keWYaH9RjsLEXHXsPfg88JiK/WQpqKq/3lQbGJxc2Q5e5f9iW78zacuQpG6EMlIFLICN69YKpnXlZJaqL1tdisNFDc8B+EVlTVdu+kv9dX/VmdCz49YugdmJfY/P4vkAXPlZV/U5Vc21P3lgxo/aZGbWqarZlUkRY/r30tqpqdfao6sUPVVXnOsBsx/q62Q6NO19aWupKdmc+TdvGJbv2y33pu8f6WzQrrWnxt7Sci8Wi6xw3vfJz38404R96UqOleUak7gAAAABJRU5ErkJggg==",
+        "print": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAC7UlEQVR42rVUv29bVRg9577rZ7/YsZ04dqpQkEAoWYoqJEBVF4SQKv6DglQmxP/AwAYT6p/A1o1sDAxdaKbAUpYuyGJprSSqG8f1j/f8/N69h8GW6zomDIgrfcu9V+c73/mODvAfjiSu3tl/+GgAVPv9/lqger2O4+PjlGSy+sbVbs+eHZfC4sEvpaj0fhzHHoBZ7RcEAWyh0I+nyZ03W622JEPSX2JIUk+f9iPQ3aqUo9JmOVpq+YpDnuUw1tYnL9K3AbSXiZl1mkga01DG0BtSrxdkrXWTSeqNUbaq4zKgIanxOMsAGMw+ri3Jk6SR5EhqdjcDtkvjur96vdoGoy1Mx5QEkJC0bmmQBE/WJG2RvFjgSDKHh4f8+JNP7xdL0b1JkgSS6sYYXmkZCBAHhdA6Cb+n8fDLvb29cwLAWbd3b3dn60H3vA+ScM7h38AsLWQEI4NGo4rnLy5+3G1uf21me+N+7uGcc1me57oKzMujXKjgqHOEL37+XJ1hJ8+m3jmfv7tYiqQpgGAmJa8clSScHBpRAzea7zGyEQUEFKevLWVVfElwArCGb+xj3GzexAe7HyLJYuTeIQgCLQAlFUlqbgNKCsLQolYK1vka41QYTVIkSjxJRxLe++gVQ2N+zXP3bb1eLzrnEI/HKEUbOOp4pE4wnBE1ILyEj66HCG0OG24YQ4ZR0WJA83BhG5K+c/r87uZm5askSUMjfzssbxa+eTjCy4mDnTvISeiOPX74rKaD6pS90fRxpRy9nEzSR7vNre8W4SCJc8fjyROFO63zk+3t7cYfp5lyJxoSmRda5QAHTQvA+1GScxxf3L62c+23S/E1188C8H+enFQNSoVRmvv7RwP1JznDgBhOhVvXQ3x/pwbvvSdgnWNVkmm324X9/f10NW0cAGgwSH0jGtY2CtWf7taAYC4gAXkgnjoYY4z3DjSmR9JLyi7l4fLoZ2f9d2qN2lun3a6WfWkXAVvBYDgcvNFqPcb/ff4GmP2RnCi8qXcAAAAASUVORK5CYII=",
         "undo": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACC0lEQVR42s1UPW/TUBR913EyVHwoAwML6sDI1gUpAwi6sDGy8ge6IDEhZWJjgQGYqcTgH9ClgwckhCAsGRBqpiDiZ/t92U7iRomdw2IHN22DCwtnero697x73z3vMva/g+qQAKx4RIS/FgTQKETySswq8pYbxQE0CvKpqgC0AFwCsHVe5SXsSit5hUREtPSFud9q2k+kjjtEdCXLskyZ5KvFrLeHhwf7RJQDsIhoeUJ1NBpteaF6kKbpjTImdfwGAHSUjHgg3/NAPOe+fC109A0AlI4+fej326cqdRynAcDyQ/Ulnc1TL5BuIM1BDkDqeK/6DCV8X+4m4+lxnEw+R1HUBmCtRHu9XpMxxkKpn81zYJ4BADDicq+8vXhf23VduxzUcOjtLLIc3JfvqgNcHXxf7s7mGQKhngbSPK4Mis4YYIsxxn56wUupI2itr65aLxPCMLzOefholbTBUqUjuDB3F/kSSiWdE1Wuk13Xtf/kTwAUqKQDIBfC3Cvj1URyHMeqmngDLCLKf3ji9iRtWmmaff/dWE10u12rqKzJGGP9/rAdxePYC8RHxhid5YbaODryrsXJuDdNj2Ou1K3CCfUECzJxY7ans8XDUJlXOhrP4mQyHQ69ncr/ZnUFbcYY44F8AQBCRQsTTfYHg8HNcydbZ3VxY7a1Tu4Igctrm+ffsb6ZLrxgL7IHfwFRn6tg8+RGLgAAAABJRU5ErkJggg==",
         "prev": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABUElEQVR42sWUQUoDMRSGX2bqQhSlK1EQhR5AQXsGD+JBvIFbBVdewiO0C0cYii6rM+00YyaZTOyUIiX0d2ELUiu0qeJbZRG+5H/v/T/RfxYABoD9CXhVgAeAXQBeGIYbK0EBeNNzmsnbvCifuNYHTvIB+EREcWyqQhV3AKBNOZTSnEyAnhMsy01zAgueu+Jo9ucLy4yiaDdTRQMApDKNVqtV/frYUrAO53VtSg4AUptmHMdOMAaAJUmyL3Pz+j6yyHX/st1uby8qc/YCY4zB99e3fN/fsdaO7NiGtVrtDUCFiOC8Jr00Ox8MR7BjIBXqeip3qWF862NPnCndVwAgMn01bzeXgVaIiDiXp7kZSABQ2tw8CrHp7JQgCNaIiDodXtem7H5C+/dpWhw6B8V0TaIo2hVKP2hTjrmLU+a7Jt57SZJj5z7+FFm/lokryXStD3LhOG+6eQvOAAAAAElFTkSuQmCC",
         "next": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABUUlEQVR42s1UO07DQBB96yQI0VAghITgEBScgBtQ0PM9AAfgGqHiEEg0NCmRUGjdRUjG8dobO3FiexPHCY8Cu0FRCDYSTLXap3kzo/dmgP8eYhlI0gBAABBC8Fcr5+SVkoXr9o7CUXTf6XQ28/9aWcJaq9WqSxU8kuRgGD+/2vZBjtXLEAqSwnGcbc8fPJBkP4x9y3IOAaDdbjdKkRZv6fnNnFRZzidpqfFJGkWi9PxbkgwjHVu2OistVD6+AQCuCq77wzhJximlCk4Wdfpthdx/BgDMptnTfD6LNtbXIAT2V/Hyog4bAPDWdS/1JGM2J6XXb5Ks/XjkIkEq/zzWU0Y6pdsLrr6KtrJtAMBx/ZtYp0wmGbuuuiilcKGuo4I7kgxHydCW3ukqxl4GEnw39SS1dKyP93Z3XkjWhRCzSkfBNM2tSnu8aFsqXZplK/gn8QEZUgmiY4rdgwAAAABJRU5ErkJggg==",
@@ -2431,6 +2556,8 @@ class App:
                        image=self.menu_icon("save"), compound="left")
         fm.add_command(label="다른 이름으로 저장...", accelerator="Ctrl+Shift+S", command=self.save_as,
                        image=self.menu_icon("save_as"), compound="left")
+        fm.add_command(label="인쇄...", accelerator="Ctrl+P", command=self.print_doc,
+                       image=self.menu_icon("print"), compound="left")
         fm.add_command(label="원하는 쪽만 저장...", accelerator="Ctrl+E", command=self.extract_dialog)
         fm.add_separator()
         fm.add_command(label="탭 닫기", accelerator="Ctrl+W", command=lambda: self.close_tab(self.tab))
@@ -2616,6 +2743,7 @@ class App:
         btn("open", self.ask_open, "열기 (Ctrl+O)", "열기")
         btn("save", self.save, "저장 — 지금 파일에 바로 저장 (Ctrl+S)", "저장")
         btn("save_as", self.save_as, "다른 이름으로 저장 (Ctrl+Shift+S)")
+        btn("print", self.print_doc, "인쇄 (Ctrl+P) — 고친 내용·메모·색칠까지 그대로", "인쇄")
         btn("undo", self.do_undo, "되돌리기 (Ctrl+Z)")
         sep()
         btn("rot_l", lambda: self.rotate_pages([self.page_no], -90), "이 쪽 왼쪽으로 회전 (Ctrl+L)")
@@ -2868,6 +2996,7 @@ class App:
                                   self.set_app_mode()))
         r.bind("<Control-s>", lambda e: self.save())
         r.bind("<Control-S>", lambda e: self.save_as())            # Ctrl+Shift+S
+        r.bind("<Control-p>", lambda e: self.print_doc())
         r.bind("<Control-z>", lambda e: self.do_undo())
         r.bind("<Control-f>", lambda e: self.focus_search("file"))
         def nav(f):   # 글자 입력칸에서는 Home/End/PgUp/PgDn을 쪽 이동에 쓰지 않음
@@ -3485,6 +3614,37 @@ class App:
         self.dirty = False
         self.status.set(f"저장했습니다: {p}")
         return True
+
+    def print_doc(self):
+        """인쇄 (Ctrl+P): Windows 인쇄 창에서 프린터·쪽 범위·매수를 고르면 지금 보이는 그대로(고친 내용 포함) 인쇄"""
+        if not self.doc:
+            messagebox.showinfo(APP, "먼저 PDF를 열어주세요.")
+            return
+        if sys.platform != "win32":
+            messagebox.showinfo(APP, "인쇄는 Windows에서만 됩니다.")
+            return
+        try:
+            got = ask_printer(int(self.root.wm_frame(), 16), len(self.doc), self.page_no)
+        except Exception as ex:
+            messagebox.showerror(APP, f"인쇄 창을 열 수 없습니다:\n{ex}")
+            return
+        if not got:
+            return
+        hdc, pages = got
+        api = _print_lib()
+        self.root.configure(cursor="watch")
+
+        def prog(i, n):
+            self.status.set(f"인쇄 중… {i + 1} / {n}쪽")
+            self.root.update_idletasks()
+        try:
+            print_pages(hdc, self.doc, pages, title=self.tab.title, progress=prog)
+            self.status.set(f"인쇄를 보냈습니다: {len(pages)}쪽")
+        except Exception as ex:
+            messagebox.showerror(APP, f"인쇄하지 못했습니다:\n{ex}")
+        finally:
+            api["gdi"].DeleteDC(hdc)
+            self.root.configure(cursor="")
 
     def save_as(self):
         """다른 이름으로 저장 (Ctrl+Shift+S) — 저장한 뒤에는 탭이 새 파일을 가리킴"""

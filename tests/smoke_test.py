@@ -749,6 +749,21 @@ for _t in [t for t in app.tabs if t.path in (_fa, _fb)]:
 app.conf["bookmarks"][:] = [n for n in app.conf["bookmarks"] if n.get("path") not in (_fa, _fb)]
 app.bm_panel.refresh(); pump(0.2)
 
+step("인쇄 (Microsoft Print to PDF)")
+_api = S._print_lib()
+_hdc = _api["gdi"].CreateDCW("WINSPOOL", "Microsoft Print to PDF", None, None)
+if _hdc:
+    _out = os.path.join(TMP, "인쇄결과.pdf")
+    S.print_pages(_hdc, app.doc, list(range(len(app.doc))), title="점검", output=_out)
+    _api["gdi"].DeleteDC(_hdc)
+    for _ in range(40):
+        if os.path.exists(_out) and os.path.getsize(_out) > 1000:
+            break
+        time.sleep(0.25)
+    check(os.path.exists(_out) and len(fitz.open(_out)) == len(app.doc), "모든 쪽 인쇄됨")
+else:
+    print("     (이 PC에는 Microsoft Print to PDF 가 없어 건너뜀)", flush=True)
+
 step("업데이트 필요 버튼")
 app.update_info = {"version": "99.0.0", "date": "2099-01-01", "notes": "### 99.0.0 에서 바뀐 점\n- 시험"}
 app.show_update_btn(); pump(0.3)
