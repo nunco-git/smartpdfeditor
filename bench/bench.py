@@ -59,7 +59,7 @@ check(app.tab_off > 0, "마지막 탭이 보이게 밀림 (off=%d)" % app.tab_of
 def shot(name):
     from PIL import ImageGrab
     for _ in range(5): root.update(); time.sleep(0.1)
-    img = ImageGrab.grab(bbox=(0, 0, 940, 200)); b = io.BytesIO(); img.save(b, "PNG")
+    img = ImageGrab.grab(bbox=(500, 90, 1040, 140)); img = img.resize((img.width * 2, img.height * 2)); b = io.BytesIO(); img.save(b, "PNG")
     s = base64.b64encode(b.getvalue()).decode()
     for i in range(0, len(s), 4000): print("IMG%s:%s" % (name, s[i:i+4000]))
 shot("tabs_end")
