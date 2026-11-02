@@ -1,0 +1,37 @@
+name: tmp-sc
+on:
+  push:
+    branches: [test-sc]
+jobs:
+  t:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          python -m pip install --only-binary=:all: -r requirements.txt pillow
+      - name: smoke
+        env: { PYTHONIOENCODING: utf-8 }
+        run: |
+          python -X faulthandler -u tests/smoke_test.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - env: { PYTHONIOENCODING: utf-8 }
+        run: |
+          @'
+          import os, sys, io, base64, time, tempfile
+          sys.path.insert(0, os.getcwd())
+          import tkinter as tk, smartpdfeditor as S
+          T = tempfile.mkdtemp(); S.CONF_DIR = T; S.CONF_FILE = os.path.join(T, "s.json"); S.AD_URL = ""; S.FIREBASE_DB_URL = ""; S.UPDATE_API = ""
+          root = tk.Tk(); app = S.App(root, [], listen=False); root.geometry("1180x400+0+0")
+          def go():
+              from PIL import ImageGrab
+              for _ in range(30): root.update(); time.sleep(0.1)
+              x, y = root.winfo_rootx(), root.winfo_rooty()
+              img = ImageGrab.grab(bbox=(x + 560, y - 30, x + root.winfo_width(), y + 60))
+              b = io.BytesIO(); img.save(b, "PNG"); s = base64.b64encode(b.getvalue()).decode()
+              for i in range(0, len(s), 4000): print("IMGpdf:" + s[i:i+4000], flush=True)
+              os._exit(0)
+          root.after(500, go); root.mainloop()
+          '@ | Set-Content t.py -Encoding utf8
+          python t.py
