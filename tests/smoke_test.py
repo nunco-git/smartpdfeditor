@@ -764,6 +764,14 @@ if _hdc:
 else:
     print("     (이 PC에는 Microsoft Print to PDF 가 없어 건너뜀)", flush=True)
 
+step("바로가기 만들기")
+_scd = os.path.join(TMP, "바로가기시험")
+os.makedirs(_scd, exist_ok=True)
+S.make_shortcut(_scd)
+check(os.path.exists(os.path.join(_scd, S.SHORTCUT_NAME)), "바로가기(.lnk) 만들어짐")
+app.refresh_shortcut_btn(); pump(0.3)
+check(app.sc_btn.winfo_ismapped() == (not (S.has_desktop_shortcut() and S.is_pinned_to_taskbar())), "바로가기 버튼 표시/숨김")
+
 step("업데이트 필요 버튼")
 app.update_info = {"version": "99.0.0", "date": "2099-01-01", "notes": "### 99.0.0 에서 바뀐 점\n- 시험"}
 app.show_update_btn(); pump(0.3)

@@ -117,7 +117,7 @@ def stats_call(url, method, body):
         r.read()
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.10"
+APP_VER = "1.0.11"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -1093,6 +1093,105 @@ def print_pages(hdc, doc, pages, title="스마트PDF Editor", output=None, progr
     except Exception:
         gdi.AbortDoc(hdc)
         raise
+
+
+# ───────────────────────── 바로가기 (바탕화면·작업표시줄) ─────────────────────────
+SHORTCUT_NAME = "스마트PDF Editor.lnk"
+
+
+def desktop_dir():
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, buf) == 0 and buf.value:   # 원드라이브 바탕화면 포함
+            return buf.value
+    except Exception:
+        pass
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+
+def has_desktop_shortcut():
+    try:
+        return os.path.exists(os.path.join(desktop_dir(), SHORTCUT_NAME))
+    except Exception:
+        return False
+
+
+def is_pinned_to_taskbar():
+    """작업표시줄에 고정돼 있는지 (고정한 바로가기 중 이 프로그램을 가리키는 것이 있는지)"""
+    d = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar")
+    exe = os.path.basename(sys.executable if getattr(sys, "frozen", False) else "smartpdfeditor.exe").lower()
+    try:
+        for n in os.listdir(d):
+            if not n.lower().endswith(".lnk"):
+                continue
+            if os.path.splitext(n)[0].lower() in ("스마트pdf editor", "smartpdfeditor"):
+                return True
+            with open(os.path.join(d, n), "rb") as f:
+                data = f.read(65536).lower()
+            if exe.encode("utf-16-le") in data or exe.encode("latin-1", "ignore") in data:
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def create_lnk(lnk_path, target, args="", workdir="", icon="", desc=""):
+    """윈도우 바로가기(.lnk) 만들기 — PowerShell 없이 Windows 기능(IShellLink)을 직접 씀"""
+    import ctypes
+    ole32 = ctypes.windll.ole32
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("a", ctypes.c_uint32), ("b", ctypes.c_uint16), ("c", ctypes.c_uint16), ("d", ctypes.c_ubyte * 8)]
+
+    def guid(t):
+        g = GUID()
+        ole32.CLSIDFromString(ctypes.c_wchar_p(t), ctypes.byref(g))
+        return g
+
+    def vcall(ptr, i, argtypes, *a):
+        vt = ctypes.cast(ptr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+        return ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, *argtypes)(vt[i])(ptr, *a)
+
+    ole32.CoInitialize(None)
+    ole32.CoCreateInstance.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p,
+                                       ctypes.POINTER(ctypes.c_void_p)]
+    psl, ppf = ctypes.c_void_p(), ctypes.c_void_p()
+    hr = ole32.CoCreateInstance(ctypes.byref(guid("{00021401-0000-0000-C000-000000000046}")), None, 1,
+                                ctypes.byref(guid("{000214F9-0000-0000-C000-000000000046}")), ctypes.byref(psl))
+    if hr != 0 or not psl:
+        raise OSError(f"바로가기 기능을 쓸 수 없습니다 ({hr & 0xFFFFFFFF:#x})")
+    W = ctypes.c_wchar_p
+    try:
+        vcall(psl.value, 20, [W], target)                     # SetPath
+        vcall(psl.value, 11, [W], args or "")                 # SetArguments
+        vcall(psl.value, 9, [W], workdir or "")               # SetWorkingDirectory
+        vcall(psl.value, 7, [W], desc or "")                  # SetDescription
+        vcall(psl.value, 17, [W, ctypes.c_int], icon or target, 0)   # SetIconLocation
+        hr = vcall(psl.value, 0, [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)],
+                   ctypes.byref(guid("{0000010B-0000-0000-C000-000000000046}")), ctypes.byref(ppf))
+        if hr != 0 or not ppf:
+            raise OSError("바로가기를 저장할 수 없습니다")
+        hr = vcall(ppf.value, 6, [W, ctypes.c_int], lnk_path, 1)    # IPersistFile::Save
+        if hr != 0:
+            raise OSError(f"바로가기를 저장할 수 없습니다 ({hr & 0xFFFFFFFF:#x}): {lnk_path}")
+    finally:
+        for p in (ppf, psl):
+            if p:
+                vcall(p.value, 2, [])
+
+
+def make_shortcut(folder):
+    """folder 에 '스마트PDF Editor' 바로가기 만들기"""
+    if getattr(sys, "frozen", False):
+        target, args, workdir = sys.executable, "", os.path.dirname(sys.executable)
+    else:
+        py = sys.executable
+        pyw = os.path.join(os.path.dirname(py), "pythonw.exe")
+        target = pyw if os.path.exists(pyw) else py
+        args, workdir = f'"{os.path.abspath(__file__)}"', os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(folder, exist_ok=True)
+    create_lnk(os.path.join(folder, SHORTCUT_NAME), target, args, workdir, target, "스마트PDF Editor (스마트공 시리즈)")
 
 
 # ───────────────────────── 한글 입력(IME) ─────────────────────────
@@ -2707,6 +2806,7 @@ class App:
         hm2.add_command(label="smartgong.kr 바로가기", command=lambda: webbrowser.open(HOME_URL))
         hm2.add_command(label="새 버전 내려받기", command=lambda: webbrowser.open(DOWNLOAD_URL))
         hm2.add_separator()
+        hm2.add_command(label="바로가기 만들기 (바탕화면·작업표시줄)…", command=self.shortcut_menu_at_pointer)
         hm2.add_command(label="정보 · 라이선스", command=self.show_about)
         hm2.add_separator()
         hm2.add_command(label=f"오류 · 개선 제안: {CONTACT_EMAIL}  (주소 복사)", command=self.copy_contact)
@@ -2873,6 +2973,10 @@ class App:
             self.labeled.append(rb)
             rb.pack(side="right", padx=1)
             Tooltip(rb, tip)
+        # 바로가기(바탕화면·작업표시줄) — 둘 다 만들어 두면 숨김
+        self.sc_btn = ttk.Button(right, text="📌 바로가기", style="Toolbutton", command=self.shortcut_menu)
+        Tooltip(self.sc_btn, "바탕화면·작업표시줄에 바로가기 만들기 (만들고 나면 이 버튼은 사라집니다)")
+        self.root.after(1500, self.refresh_shortcut_btn)
 
         self.root.bind("<Configure>", self.on_root_resize, add="+")
         self.assign_top_styles(self.topbox)
@@ -3614,6 +3718,70 @@ class App:
         self.dirty = False
         self.status.set(f"저장했습니다: {p}")
         return True
+
+    # ---------- 바로가기 ----------
+    def refresh_shortcut_btn(self):
+        if sys.platform != "win32":
+            return
+        try:
+            done = has_desktop_shortcut() and is_pinned_to_taskbar()
+            if done:
+                self.sc_btn.pack_forget()
+            elif not self.sc_btn.winfo_ismapped():
+                self.sc_btn.pack(side="right", padx=(1, 6))
+        except tk.TclError:
+            pass
+
+    def shortcut_menu_at_pointer(self):
+        if not self.sc_btn.winfo_ismapped():      # 버튼이 숨겨졌으면 마우스 위치에 메뉴
+            m = tk.Menu(self.root, tearoff=0)
+            m.add_command(label="🖥 바탕화면에 바로가기 만들기", command=self.make_desktop_shortcut)
+            m.add_command(label="📌 작업표시줄에 고정하기…", command=self.pin_taskbar)
+            try:
+                m.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+            finally:
+                m.grab_release()
+        else:
+            self.shortcut_menu()
+
+    def shortcut_menu(self):
+        m = tk.Menu(self.root, tearoff=0)
+        desk, task = has_desktop_shortcut(), is_pinned_to_taskbar()
+        m.add_command(label="🖥 바탕화면에 바로가기 만들기" + ("  (만들어 둠)" if desk else ""),
+                      command=self.make_desktop_shortcut, state="disabled" if desk else "normal")
+        m.add_command(label="📌 작업표시줄에 고정하기…" + ("  (고정됨)" if task else ""),
+                      command=self.pin_taskbar, state="disabled" if task else "normal")
+        b = self.sc_btn
+        try:
+            m.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+        finally:
+            m.grab_release()
+
+    def make_desktop_shortcut(self):
+        try:
+            make_shortcut(desktop_dir())
+            self.status.set("바탕화면에 '스마트PDF Editor' 바로가기를 만들었습니다.")
+        except Exception as ex:
+            messagebox.showerror(APP, f"바로가기를 만들 수 없습니다:\n{ex}")
+        self.root.after(800, self.refresh_shortcut_btn)
+
+    def pin_taskbar(self):
+        try:          # 시작 메뉴에도 넣어 두면 검색·고정이 쉬움
+            make_shortcut(os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs"))
+        except Exception:
+            pass
+        messagebox.showinfo(APP, "작업표시줄 고정은 Windows 보안 정책상 프로그램이 스스로 할 수 없어서, 한 번만 직접 해 주세요.\n\n"
+                                 "① 화면 아래 작업표시줄에 있는 스마트PDF Editor 아이콘을 마우스 오른쪽 클릭\n"
+                                 "② [작업 표시줄에 고정] 클릭\n\n"
+                                 "(시작 메뉴에도 넣어 두었습니다. 시작 메뉴에서 오른쪽 클릭 → [작업 표시줄에 고정]으로도 됩니다.)")
+        self._watch_pin(40)
+
+    def _watch_pin(self, n):
+        if is_pinned_to_taskbar():
+            self.status.set("작업표시줄에 고정됐습니다.")
+            self.refresh_shortcut_btn()
+        elif n > 0:
+            self.root.after(1500, lambda: self._watch_pin(n - 1))
 
     def print_doc(self):
         """인쇄 (Ctrl+P): Windows 인쇄 창에서 프린터·쪽 범위·매수를 고르면 지금 보이는 그대로(고친 내용 포함) 인쇄"""
