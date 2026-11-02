@@ -679,6 +679,40 @@ check(len(app.ad_list) == 1, "깨진 그림·지난 광고 제외")
 app.apply_ads({"interval": 5, "ads": []})
 check(int(app.ad_frame.cget("height")) <= 1, "광고 없으면 최소화")
 
+step("탭이 많을 때 ◀ ▶")
+_many = []
+for _i in range(12):
+    _f = os.path.join(TMP, "긴_이름의_시험_문서_%02d.pdf" % _i)
+    _d = fitz.open(); _d.new_page().insert_text((72, 72), "t%d" % _i); _d.save(_f); _many.append(_f)
+    app.open_file(_f)
+pump(0.6)
+check(app.tab_right.winfo_ismapped(), "탭이 넘치면 화살표 표시")
+check(app.tab_off > 0, "고른 탭이 보이게 밀림")
+app.switch_tab(app.tabs[0]); pump(0.3)
+check(app.tab_off == 0, "첫 탭으로 가면 맨 앞")
+for _t in [t for t in app.tabs if t.path in _many]:
+    _t._dirty = False
+    app.close_tab(_t)
+pump(0.4)
+check(not app.tab_right.winfo_ismapped(), "탭이 줄면 화살표 숨김")
+
+step("저장 · 다른 이름으로 저장")
+_sp = os.path.join(TMP, "저장시험.pdf")
+_d = fitz.open(); _d.new_page().insert_text((72, 72), "orig"); _d.save(_sp)
+app.open_file(_sp); pump(0.3)
+app.doc[0].insert_text((72, 120), "SAVED-NOW"); app.dirty = True
+check(app.save() and "SAVED-NOW" in fitz.open(_sp)[0].get_text() and app.path == _sp, "Ctrl+S 바로 덮어쓰기")
+_sp2 = os.path.join(TMP, "저장시험_새이름.pdf")
+_ask = S.filedialog.asksaveasfilename
+S.filedialog.asksaveasfilename = lambda **kw: _sp2
+app.doc[0].insert_text((72, 160), "SAVE-AS"); app.dirty = True
+check(app.save_as() and app.path == _sp2 and "SAVE-AS" in fitz.open(_sp2)[0].get_text()
+      and "SAVE-AS" not in fitz.open(_sp)[0].get_text(), "다른 이름으로 저장 → 탭이 새 파일, 원본 그대로")
+S.filedialog.asksaveasfilename = _ask
+app.tab._dirty = False
+app.close_tab(app.tab)
+pump(0.2)
+
 step("한글 입력 창 글꼴 맞추기")
 probe = S.ttk.Entry(root, font=("맑은 고딕", 11))
 probe.pack()

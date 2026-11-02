@@ -112,7 +112,7 @@ def stats_call(url, method, body):
         r.read()
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.4"
+APP_VER = "1.0.5"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -220,7 +220,8 @@ HELP_SECTIONS = [
         "PDF 파일을 smartpdfeditor.exe 아이콘 위로 끌어다 놓아도 열립니다.",
         "다시 열면 마지막으로 보던 쪽에서 이어집니다.",
         ("소", "저장 · 되돌리기"),
-        "Ctrl+S — 기본 이름은 '원본이름_수정.pdf' 라서 원본은 그대로 남습니다.",
+        "Ctrl+S — 지금 파일에 바로 저장합니다. (덮어쓰기)",
+        "Ctrl+Shift+S — 다른 이름으로 저장. 원본을 남기고 싶으면 이것으로 새 이름을 정하세요. 저장한 뒤 탭은 새 파일을 가리킵니다.",
         "Ctrl+Z — 되돌리기 (최근 30번까지). 저장하지 않은 탭 이름 앞에는 ● 표시가 붙습니다.",
     ]),
     ("화면 구성", "m_view", [
@@ -287,6 +288,7 @@ HELP_SECTIONS = [
         "폴더 검색 결과는 [목록 저장]으로 즐겨찾기·북마크 폴더에 넣어 둘 수 있습니다.",
     ]),
     ("탭 · 새 창", "plus", [
+        "탭이 많아 다 보이지 않으면 탭 막대 양옆에 ◀ ▶ 가 생깁니다. 눌러서(또는 탭 위에서 마우스 휠) 옆으로 넘기고, ▾ 를 누르면 열린 탭 목록에서 바로 고를 수 있습니다.",
         "여러 파일을 탭으로 엽니다. 탭 이름의 × 또는 휠 버튼 클릭 · Ctrl+W 로 닫기",
         ("키", "Ctrl+Tab", "다음 탭"),
         ("키", "Ctrl+N  ·  Ctrl+Shift+O", "새 창  ·  새 창으로 열기"),
@@ -886,6 +888,39 @@ def ask_text(parent, title, prompt, initial=""):
     return res["v"]
 
 
+def page_sizes_fast(doc):
+    """모든 쪽의 (너비, 높이). 쪽을 하나하나 열지 않고 PDF 정보만 읽어서 큰 파일도 바로 열림"""
+    out = []
+    for i in range(len(doc)):
+        try:
+            r = doc.page_cropbox(i)
+            rot = 0
+            x = doc.page_xref(i)
+            for _ in range(20):                     # 회전 값은 위쪽(Parent)에서 물려받을 수 있음
+                t, v = doc.xref_get_key(x, "Rotate")
+                if t != "null":
+                    rot = int(float(v)) % 360
+                    break
+                t, v = doc.xref_get_key(x, "Parent")
+                if t != "xref":
+                    break
+                x = int(v.split()[0])
+            w, h = abs(r.width), abs(r.height)
+            out.append((h, w) if rot in (90, 270) else (w, h))
+        except Exception:
+            r = doc[i].rect
+            out.append((r.width, r.height))
+    return out
+
+
+def page_photo(page, zoom):
+    """쪽 그림 → tk 그림. PNG로 압축하지 않고 PPM 그대로 넘겨 빠름"""
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+    if pix.n != 3:
+        pix = fitz.Pixmap(fitz.csRGB, pix)
+    return tk.PhotoImage(data=pix.tobytes("ppm"))
+
+
 # ───────────────────────── 한글 입력(IME) ─────────────────────────
 _ime = {}
 
@@ -1171,6 +1206,7 @@ ICON_DATA = {
     "light": {
         "open": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAB4ElEQVR42s2UPWvUQRDGf7O7/3vJ5S6JGlNoJYithYWIkHwA29R+BW21OPIJ/A4iiIWFoIWV0QNtDHaWmkKDBIx54XK52//uY5FcopiEC0ZwYGBgZ5955pnZhf/dbBjo1Wz443RxLtvCQj7VimrjTpIf9tjVeivc8Y5aSqasrMZ44bqb8ZndfvNB7bYblakB6PnNqf6WX6u2KhAFCIIjbse1MuZb9Svd93y6ZEyvHg069zqZoV3doldK+j7YjBNlkkAGpFo9TMWoq3Zt6R0sjd7yMDYjADIzk/BlzBi61300e8EZ5WH0JKkxFtgp48PafGc5HD4JYYaVpagEuxjq4f6RlLKgESi/9TpmfA6HyurDvsCDjAZd0jFd5ppwRWu6vv727pnwG1BO+OnL+NYMpBLMhrjhON2SlKuN+mPXi08PEpWxooZrngfzEE6wfsrgfdNZfLl3axJywhpnwReQE0gjuXJW8N6l7f6PvnY6BzScxzVnQL8+yFE22bKNVQB1GjcefHUA68uLWL2VrNpMqEzCkmAkR0pAwipP9vfQdjbMNWcmaY65YtAHO4F+WZ7CiGtfVvYBJ67Px1g594Kt7fFYJg3HOwIauJCL3rpLqx83/vF/qLb7O6QF2e5IT9d+Akb68RwAWZn8AAAAAElFTkSuQmCC",
         "save": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACkklEQVR42rWUwWtcVRTGf9+5981MxmliLcFViQgVa1GQ2YgrF67cuTCEdinUhUt3boII0Y1/gK5cdNEm+AeUClXahYUOiEVBsLEl1raBTpuUTiZ5993jYiYxyUxiKXjgbg7nfu98v3veEbtj3o27nXC2DWfbbTqMRhvo0OGjb6Ddhs73y5ml2Wq00l08a+y6G3cSkr+6cPOVVR2dPf26hTNvHtGjfh4WAAatmlGLcHW5zxeX17xRxKosNy/dka6BC+SReTeEz3z598mtonbFaB5rtOpMPQ++aZggAP0EX11xTkyLUy828TpYIWKsf3584a+5lU91gUUP1r7bCSDPuZrTxNSx/Ph+v7/+KK11q7TWLdNat0zrD8vUfbCVfvj1Trr++2raWO+l3Oum1Ov2JeHGxwAsLf3rCJlTlY4UQTEjHOGA77gWSENkQiA8I6ncy3BHVHKgCOK5mihdhKFlE7w10+DEdEERdr+fwNFYQXeIJu49Tlxf2eRJmbFdd9872aQWxW/3tog2/sH3CGZ3GoW4+mefH5c32D9Heeg9mmgUoqp8pCbu/4IEG6WzVfnouA0M4jgmmKzp8A5N0Cudd15u8PZMnezssbzdpQluPUx8d6OHHSRoBinDVN34+v0XODph//mD3HyQuLbqtOxAhjBRCNNA3H2AgDEso8FkXQOuOoRh9gGraIcLmmAMZsb6etotocPGRu4O7nKq7e1xUIc+tCmo9mtb593lDBALv0iV5I3JenMiBCCYEWD0hGE+11o1q7dCUHUOgNemFZmdrZh3++MT/fTSwu25++nIh0u/KJx+o6k8hsl27sZq6T+v9Kriycb5M+Xxbz8brMDE/xuLHlj04P5054NFD8xf3jMp/wA5AC7ymd2FVAAAAABJRU5ErkJggg==",
+        "save_as": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADU0lEQVR42pWUT2hcVRTGf+feOzP5PzOxIRKigmizUYrMwiCRgQoW0Vq6MFREcJG2IUG6cOE/JIogCEVFEKzRnVA62dSFgmCtpVjUGEFEm4WJEWtbU9NJ0kwymffuPS7eRCc1UXrgPO57vPNxvnO/7wgbMaam0DNlDxUKbBUF4PDUFFMA+UJgUDzbhqpwo7FNjWNszCASdozN7Ozqumnw9QdbbGtKJAZMAAx0pA0YeOnjBf1+ISWtVM7OipxCVRDRRkABlduOXuyLffrLfD7X+fajjo4miANYgaqHN88ou+8UzswEvpit0u4CUWXpwG8v9J6gpLaRvgNRjS4MurZcZ7w8X10q73AhI8QBnIFKpHz+wzw3uzbCaky8Uo01l8uo6Chwgh/RzZQBxKj6SBFxzohLGUFIAJ2BppQh4wwigoCgQUQk2nqGf5NPhrFSUwSIFYyAD8qRgSy9OcdPf9SwZmNSyH8CGgNrUeDVz65irvu1yQk+wPJ6oNkJqv+wPLYXe+hl1Xo/DR0CCvy+FBMFkPp7ohAFhJSFbFoalKNGRKLDW3UoApFXHt/VQl9XCtXkW1KYnMtrgQ+/q+CT+YqIhGuqD7TBaUQU1QTQAN5Dvtny1iN5Mm57nU/PR5y9bLi6uL6sqgeILh2PJsffT5uWg4qIaaTrBFYjJQ4Q+USLG1nz4AOknZhLVxZ4ds8tRVZnj6+efMqnyueG1k+NvANqXR1N6w+MJFJppAwQ6rc+f60mI/d380r/hezqyWGI1mxl8c9a60NPjgBll8xPMyCKqte6R68HNIIJ3svwQDf7umeofjSqRGui60txa/GZNL1PnAM+SFRlzWkNsdiWbCbbbC1gjcFCYwYRa9nf8zO1T0cJUTUBG3jasXPoW+BhEfnFMqam/GL7bGdxeHoldtl7e+zcrTk75wNzRpgD5oBfQXpl+bypfHJE8VXR6mIC1ndwEtgjIouqajeu5H/X11dfTx179/n9kZbuW18ZvzvS6fdUVb9R1fyGJjdXlNQ+VlKrqqYxS6VSWkQoFHa91r97r5ae61edGVdVnWwAs//28qD4icSlm9abqkZvTEw0ZxZX7vBrC0c77tp3D7cPddRplutu8Te0nIvFomu0m1453741TfgLa1qdanHi1QcAAAAASUVORK5CYII=",
         "undo": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACcklEQVR42s1Uv2tTURT+zn0vL2mqlg5m1dVEUXiD0j778uOVWihuZ3ARXIqC2EFwEh4P/wJF0L1L4Q4dFBxsqzGpEDBTbXCq4KCQRQvaNi/vvuuSaCxpUouD33ju4dzvnPOdD/jfQUfI04MSjUGPzGzkcjnRaDTibsz3fZHJZESj0RhMgZkNAKIfqyyz5TIfs+fm0sM67Ncy+b5PQRDETt4rEeGu1nqSiE7EWkeCqA6ip5W1l4sAVIdE/EdB27bTqdExd8RKb66sPP8EAE5h+kkqad1stcLPsVZlaPoI0uNElLes1Jl2u1X7Fu7NblSrXzt1NAAQMxvZbFavlis100zkoqhdA2jXsqzZKAwXCq7zOAiCuLcFxy15wjSekcaGCndmSqXSdhAEGoAm27YT9Xq9PemW7ltW4oEGYCUs7Hz/sVB9s/qo86loNpsEAJlMRksp1UWnYI+mU+9aYWtx/fXadWY2pJSquww4bsnLT1/RTr54zyl4N3oWRX0WaAHAhFt8eLngac/zxrojNKWUMQBQHG5Gob5WLa8tdR+llOoAUSgAgkDLZiJxZy+MzgJYZ2ZhdodZqVS+AFhiZqPZbFK5XI6GiF0TiTaAmAjJbtDslQsziwGsfmFra0sAUCpWlwxFQrX0BwCQUuq/OVPBzIZt2wkAOOc441PF6W0nX3zb0a7Yz3AYYiklACjHcU4KK/1CCAKpcL43yTysMbjuzCkY+kIcx0UQ5gGo3b1wqlYtv/d9X3S1KoZVc13XAKAVotvJkdSyJtwiQIY7rfO16qs6Mxv7hX9YhqedvOdOTFw9jt/WI/6JifZxpiNBHHQ5vfgJSI33JIoGXTAAAAAASUVORK5CYII=",
         "prev": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABnUlEQVR42sWUQUoDMRSGXzLjdERQREEURbyACqPCTBMz0xmtotts3XgCT1B6Abe6EDxA0aVudBEpVNSIV3DnQhBBcMbWxE0EF7ZMteKD7JIveX/+/wH8cyGz/gT8q8IGgmdnVwY6QXFOmAIATVjpcGhEX/lRNN0O2hHIObcAQBFChkkYnxRcdwshmLEARgEAKpVK/tYNDAghwySKG8n6pqal5KZYjOYMDHcjLgYARSkd11bhyHVdP03TBrTSjXq9/sQ5t2q12nsuDc3Nyl+OF5FdkG6/62fZ62UeWFufUUqnSJg8hMmapmGy63nJUKc2277QiKyVsgcRRmNaqzeF9J2UZ8+MMbtarequDff5imJY2mZJWUer65qweP/LR+EfQ30almmYPMblDV0M4708dmvrI8aYLYRoBYwtWJZz6vQ5o1mWHli6tSOEeDFndVeZ9DyvT0rZ9JfjRdtGx45TmHzL0husWlwIcW+26dxJkVI2OedW4+L8GprZUpamtwhh7x3jka6T8l1qgiCYCBibN0rjXo6sns1ElMfcPa0P9gSXpHPkmh4AAAAASUVORK5CYII=",
         "next": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABlElEQVR42s1UO0/CUBQ+ty1gYDBG2kSNJq6spANQetveBgJxrT/AV2Lioj9Awq+AmPjY2YzBOEGJhkFZ3XFwIHHxMQC3vS6WRZBHjfFbbnJPvnvOud/5DsB/Bz8mzn2d6NczFwoFzg+fAwCkaBrBJHMZN815AADLsviZWrYsixNFkWNIKIUjkRx0KVlZW3+4ub56xhgL7XbbHfUg+uleUZQoCKGLUGgu3+v1XqjTzTUbjft4PB5otVr9adseJEtppESyeZbWzU5CJfKk7Q/9S4+oYFI2cxssbWTeE6q+5Uco5BEVjRypuvmhmVmW0vXNYZVOkoHV63UOAMB1ockYvPGCAMDQKgBAp9NBk4gygCdAEuu7wUDwBCEEvX63vCxGD2KxGCsWi+7Uw5zSjG1sZhkmGaboZG8W9yCPkFSNY0wyTDOzLImNnXEK86MqkySJW5CWTsPh8KFD6atD+/t3du0MYyxUq1VnnPm/oVKpMGDuI6X9J5dR49aunWOMBdu2qa+lIMvyop9BHuEWf5tmUr//DT4BRbWLzZVelJYAAAAASUVORK5CYII=",
@@ -1209,6 +1245,7 @@ ICON_DATA = {
     "dark": {
         "open": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAB4ElEQVR42s2UPWvUQRDGf7O7/3vJ5S6JGlNoJYithYWIkHwA29R+BW21OPIJ/A4iiIWFoIWV0QNtDHaWmkKDBIx54XK52//uY5FcopiEC0ZwYGBgZ5955pnZhf/dbBjo1Wz443RxLtvCQj7VimrjTpIf9tjVeivc8Y5aSqasrMZ44bqb8ZndfvNB7bYblakB6PnNqf6WX6u2KhAFCIIjbse1MuZb9Svd93y6ZEyvHg069zqZoV3doldK+j7YjBNlkkAGpFo9TMWoq3Zt6R0sjd7yMDYjADIzk/BlzBi61300e8EZ5WH0JKkxFtgp48PafGc5HD4JYYaVpagEuxjq4f6RlLKgESi/9TpmfA6HyurDvsCDjAZd0jFd5ppwRWu6vv727pnwG1BO+OnL+NYMpBLMhrjhON2SlKuN+mPXi08PEpWxooZrngfzEE6wfsrgfdNZfLl3axJywhpnwReQE0gjuXJW8N6l7f6PvnY6BzScxzVnQL8+yFE22bKNVQB1GjcefHUA68uLWL2VrNpMqEzCkmAkR0pAwipP9vfQdjbMNWcmaY65YtAHO4F+WZ7CiGtfVvYBJ67Px1g594Kt7fFYJg3HOwIauJCL3rpLqx83/vF/qLb7O6QF2e5IT9d+Akb68RwAWZn8AAAAAElFTkSuQmCC",
         "save": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACkklEQVR42rWUwWtcVRTGf9+5981MxmliLcFViQgVa1GQ2YgrF67cuTCEdinUhUt3boII0Y1/gK5cdNEm+AeUClXahYUOiEVBsLEl1raBTpuUTiZ5993jYiYxyUxiKXjgbg7nfu98v3veEbtj3o27nXC2DWfbbTqMRhvo0OGjb6Ddhs73y5ml2Wq00l08a+y6G3cSkr+6cPOVVR2dPf26hTNvHtGjfh4WAAatmlGLcHW5zxeX17xRxKosNy/dka6BC+SReTeEz3z598mtonbFaB5rtOpMPQ++aZggAP0EX11xTkyLUy828TpYIWKsf3584a+5lU91gUUP1r7bCSDPuZrTxNSx/Ph+v7/+KK11q7TWLdNat0zrD8vUfbCVfvj1Trr++2raWO+l3Oum1Ov2JeHGxwAsLf3rCJlTlY4UQTEjHOGA77gWSENkQiA8I6ncy3BHVHKgCOK5mihdhKFlE7w10+DEdEERdr+fwNFYQXeIJu49Tlxf2eRJmbFdd9872aQWxW/3tog2/sH3CGZ3GoW4+mefH5c32D9Heeg9mmgUoqp8pCbu/4IEG6WzVfnouA0M4jgmmKzp8A5N0Cudd15u8PZMnezssbzdpQluPUx8d6OHHSRoBinDVN34+v0XODph//mD3HyQuLbqtOxAhjBRCNNA3H2AgDEso8FkXQOuOoRh9gGraIcLmmAMZsb6etotocPGRu4O7nKq7e1xUIc+tCmo9mtb593lDBALv0iV5I3JenMiBCCYEWD0hGE+11o1q7dCUHUOgNemFZmdrZh3++MT/fTSwu25++nIh0u/KJx+o6k8hsl27sZq6T+v9Kriycb5M+Xxbz8brMDE/xuLHlj04P5054NFD8xf3jMp/wA5AC7ymd2FVAAAAABJRU5ErkJggg==",
+        "save_as": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADSUlEQVR42pWUT2hcVRTGf+feOzPJ5M/MxIZIiIoLm1URmYUuIgEFi/gPF4aKCC76JySIiAtBkVEKgiAoiotquxCE0qyq4KJgHUuwC2OEItaIZJyaaDVtOkmamczMe+8eF29GpyGp9MB53Pd45+N83/3OEdpRUJMfnreH83l2ijxwZH6eeYBc3jMhEbuGqnCrsUuNo1AwiPg9hcW9g4O3TbzzSNr2JERCwHjAQH/SgIE3vlzVC6sJ6aE6WxI5i6ogop2AAip3vfvnaBglv83lsgMfPOno74LQgxWoR/DeOeWhe4Rzi55vSnX6nCeorh9Yem3kFDNqO+k7ENVgecL1ZgfCjZX6emWP8ykh9OAMVAPl6x9XuN314msh4WY91Gw2paLTwCl+Qm+kDCBGNQoUEeeMuIQRhBjQGehKGFLOICIICOpFRIKdNfyXfCzGZlMRIFQwApFXXhrLMJJ1XPy7iTVtpZCbAhoDW4Hn6FfXMNt+7XJC5GGj4el2gup/LI89gT38pmqrn44OAQX+WA8JPEjrPXaIAkLCQiYpHc5RIyLBkZ06FIEgUp69N83oYALV+FtcGJ8rW57PfqgSxfqKiPjrqg/3QhERRTUGNEAUQa7b8v7jOVJud58vrATM/mW4ttbYUNUDBJdPBnOfHE+a9CFFxHTSdQK1QAk9BFHsxXY2I4g8JJ2Yy1dWeXX/HePUSidrp1+IEpXzBxtnpz4Cta6Fpq0HRmKrdFIG8K1bX7nelKkHh3jrgeVM7fQkBFu2una12fPo81NAxcX6aQpEUY20NaPbAY1gfBTJ5NgQTw0tUv98Wgm2RBvrYc/4K0lGnjsPnIhdZU1RfSg2nUlluq0FrDFY6EwvxlqeHl6keWYaH9RjsLEXHXsPfg88JiK/WQpqKq/3lQbGJxc2Q5e5f9iW78zacuQpG6EMlIFLICN69YKpnXlZJaqL1tdisNFDc8B+EVlTVdu+kv9dX/VmdCz49YugdmJfY/P4vkAXPlZV/U5Vc21P3lgxo/aZGbWqarZlUkRY/r30tqpqdfao6sUPVVXnOsBsx/q62Q6NO19aWupKdmc+TdvGJbv2y33pu8f6WzQrrWnxt7Sci8Wi6xw3vfJz38404R96UqOleUak7gAAAABJRU5ErkJggg==",
         "undo": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACC0lEQVR42s1UPW/TUBR913EyVHwoAwML6sDI1gUpAwi6sDGy8ge6IDEhZWJjgQGYqcTgH9ClgwckhCAsGRBqpiDiZ/t92U7iRomdw2IHN22DCwtnero697x73z3vMva/g+qQAKx4RIS/FgTQKETySswq8pYbxQE0CvKpqgC0AFwCsHVe5SXsSit5hUREtPSFud9q2k+kjjtEdCXLskyZ5KvFrLeHhwf7RJQDsIhoeUJ1NBpteaF6kKbpjTImdfwGAHSUjHgg3/NAPOe+fC109A0AlI4+fej326cqdRynAcDyQ/Ulnc1TL5BuIM1BDkDqeK/6DCV8X+4m4+lxnEw+R1HUBmCtRHu9XpMxxkKpn81zYJ4BADDicq+8vXhf23VduxzUcOjtLLIc3JfvqgNcHXxf7s7mGQKhngbSPK4Mis4YYIsxxn56wUupI2itr65aLxPCMLzOefholbTBUqUjuDB3F/kSSiWdE1Wuk13Xtf/kTwAUqKQDIBfC3Cvj1URyHMeqmngDLCLKf3ji9iRtWmmaff/dWE10u12rqKzJGGP9/rAdxePYC8RHxhid5YbaODryrsXJuDdNj2Ou1K3CCfUECzJxY7ans8XDUJlXOhrP4mQyHQ69ncr/ZnUFbcYY44F8AQBCRQsTTfYHg8HNcydbZ3VxY7a1Tu4Igctrm+ffsb6ZLrxgL7IHfwFRn6tg8+RGLgAAAABJRU5ErkJggg==",
         "prev": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABUElEQVR42sWUQUoDMRSGX2bqQhSlK1EQhR5AQXsGD+JBvIFbBVdewiO0C0cYii6rM+00YyaZTOyUIiX0d2ELUiu0qeJbZRG+5H/v/T/RfxYABoD9CXhVgAeAXQBeGIYbK0EBeNNzmsnbvCifuNYHTvIB+EREcWyqQhV3AKBNOZTSnEyAnhMsy01zAgueu+Jo9ucLy4yiaDdTRQMApDKNVqtV/frYUrAO53VtSg4AUptmHMdOMAaAJUmyL3Pz+j6yyHX/st1uby8qc/YCY4zB99e3fN/fsdaO7NiGtVrtDUCFiOC8Jr00Ox8MR7BjIBXqeip3qWF862NPnCndVwAgMn01bzeXgVaIiDiXp7kZSABQ2tw8CrHp7JQgCNaIiDodXtem7H5C+/dpWhw6B8V0TaIo2hVKP2hTjrmLU+a7Jt57SZJj5z7+FFm/lokryXStD3LhOG+6eQvOAAAAAElFTkSuQmCC",
         "next": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABUUlEQVR42s1UO07DQBB96yQI0VAghITgEBScgBtQ0PM9AAfgGqHiEEg0NCmRUGjdRUjG8dobO3FiexPHCY8Cu0FRCDYSTLXap3kzo/dmgP8eYhlI0gBAABBC8Fcr5+SVkoXr9o7CUXTf6XQ28/9aWcJaq9WqSxU8kuRgGD+/2vZBjtXLEAqSwnGcbc8fPJBkP4x9y3IOAaDdbjdKkRZv6fnNnFRZzidpqfFJGkWi9PxbkgwjHVu2OistVD6+AQCuCq77wzhJximlCk4Wdfpthdx/BgDMptnTfD6LNtbXIAT2V/Hyog4bAPDWdS/1JGM2J6XXb5Ks/XjkIkEq/zzWU0Y6pdsLrr6KtrJtAMBx/ZtYp0wmGbuuuiilcKGuo4I7kgxHydCW3ukqxl4GEnw39SS1dKyP93Z3XkjWhRCzSkfBNM2tSnu8aFsqXZplK/gn8QEZUgmiY4rdgwAAAABJRU5ErkJggg==",
@@ -2251,8 +2288,10 @@ class App:
         self.recent_menu = tk.Menu(fm, tearoff=0)
         fm.add_cascade(label="최근 본 파일", menu=self.recent_menu)
         fm.add_separator()
-        fm.add_command(label="저장...", accelerator="Ctrl+S", command=self.save,
+        fm.add_command(label="저장", accelerator="Ctrl+S", command=self.save,
                        image=self.menu_icon("save"), compound="left")
+        fm.add_command(label="다른 이름으로 저장...", accelerator="Ctrl+Shift+S", command=self.save_as,
+                       image=self.menu_icon("save_as"), compound="left")
         fm.add_command(label="원하는 쪽만 저장...", accelerator="Ctrl+E", command=self.extract_dialog)
         fm.add_separator()
         fm.add_command(label="탭 닫기", accelerator="Ctrl+W", command=lambda: self.close_tab(self.tab))
@@ -2434,7 +2473,8 @@ class App:
 
         sep()
         btn("open", self.ask_open, "열기 (Ctrl+O)", "열기")
-        btn("save", self.save, "저장 (Ctrl+S)", "저장")
+        btn("save", self.save, "저장 — 지금 파일에 바로 저장 (Ctrl+S)", "저장")
+        btn("save_as", self.save_as, "다른 이름으로 저장 (Ctrl+Shift+S)")
         btn("undo", self.do_undo, "되돌리기 (Ctrl+Z)")
         sep()
         btn("rot_l", lambda: self.rotate_pages([self.page_no], -90), "이 쪽 왼쪽으로 회전 (Ctrl+L)")
@@ -2595,11 +2635,28 @@ class App:
             self.pw.forget(self.side_box)
         self._close_themes = set()
         self.ensure_tab_close(ttk.Style(self.root))
-        self.tabbar = ttk.Notebook(wrap, style="Closable.TNotebook")
+        # 탭이 많으면 탭 막대를 옆으로 밀어서 봄: [◀] 탭들 [▶] [▾ 목록]
+        th = ttk.Frame(wrap)
+        th.pack(side="top", fill="x")
+        th.columnconfigure(1, weight=1)
+        self.tab_left = ttk.Button(th, text="◀", width=2, style="Toolbutton", command=lambda: self.scroll_tabs(-1))
+        self.tab_right = ttk.Button(th, text="▶", width=2, style="Toolbutton", command=lambda: self.scroll_tabs(1))
+        self.tab_more = ttk.Button(th, text="▾", width=2, style="Toolbutton", command=self.show_tab_list)
+        Tooltip(self.tab_left, "앞쪽 탭 보기 (탭 위에서 마우스 휠도 됨)")
+        Tooltip(self.tab_right, "뒤쪽 탭 보기")
+        Tooltip(self.tab_more, "열린 탭 목록에서 고르기")
+        self.tab_view = ttk.Frame(th, height=1)
+        self.tab_view.grid(row=0, column=1, sticky="ew")
+        self.tab_off = 0
+        self._tab_spans = None
+        self._fit_job = None
+        self.tabbar = ttk.Notebook(self.tab_view, style="Closable.TNotebook")
         self._pressed_tab = None
         self.tabbar.bind("<ButtonPress-1>", self.on_tab_press, add="+")
         self.tabbar.bind("<ButtonRelease-1>", self.on_tab_release, add="+")
-        self.tabbar.pack(side="top", fill="x")
+        self.tabbar.place(x=0, y=0)
+        self.tab_view.bind("<Configure>", lambda e: self.fit_tabs_later())
+        self.tabbar.bind("<MouseWheel>", self.on_tab_wheel)
         self.tabbar.bind("<<NotebookTabChanged>>", self.on_tab_changed)
         self.tabbar.bind("<Button-2>", self.on_tab_middle)
         self.tabbar.bind("<Button-3>", self.on_tab_menu)
@@ -2660,6 +2717,7 @@ class App:
         r.bind("<F4>", lambda e: (self.app_mode.set("edit" if self.app_mode.get() == "view" else "view"),
                                   self.set_app_mode()))
         r.bind("<Control-s>", lambda e: self.save())
+        r.bind("<Control-S>", lambda e: self.save_as())            # Ctrl+Shift+S
         r.bind("<Control-z>", lambda e: self.do_undo())
         r.bind("<Control-f>", lambda e: self.focus_search("file"))
         def nav(f):   # 글자 입력칸에서는 Home/End/PgUp/PgDn을 쪽 이동에 쓰지 않음
@@ -2719,6 +2777,7 @@ class App:
         t.frame = ttk.Frame(self.tabbar, height=1)
         self.tabs.append(t)
         self.tabbar.add(t.frame, text=" " + t.title + " ")
+        self.fit_tabs_later()
         self.add_recent(p)
         self.update_recent_menu()
         self.persist()
@@ -2978,6 +3037,7 @@ class App:
         self.tab = t
         if t.frame is not None and self.tabbar.select() != str(t.frame):
             self.tabbar.select(t.frame)
+        self.fit_tabs_later()
         self.root.title(f"{t.title} - {APP}" if t.doc else APP)
         if t.doc:
             self.render(goto=t.page_no)
@@ -2993,6 +3053,100 @@ class App:
                 if t is not self.tab:
                     self.switch_tab(t)
                 return
+
+    # ── 탭이 많을 때 옆으로 밀기 ──
+    def fit_tabs_later(self):
+        if self._fit_job is None:
+            self._fit_job = self.root.after_idle(self.fit_tabs)
+
+    def _tab_spans_now(self):
+        """탭마다 (왼쪽 x, 오른쪽 x) — 탭 막대를 훑어서 구함"""
+        nb = self.tabbar
+        n = len(self.tabs)
+        if not n:
+            return []
+        y = max(2, nb.winfo_reqheight() // 2)
+        spans = [None] * n
+        for x in range(0, nb.winfo_width() + 1, 2):
+            try:
+                i = nb.index(f"@{x},{y}")
+            except tk.TclError:
+                continue
+            if 0 <= i < n:
+                a = spans[i]
+                spans[i] = (x, x) if a is None else (a[0], x)
+        return spans
+
+    def fit_tabs(self):
+        self._fit_job = None
+        nb, view = self.tabbar, self.tab_view
+        try:
+            nb.update_idletasks()
+            rw, rh = nb.winfo_reqwidth(), nb.winfo_reqheight()
+            if int(view.cget("height")) != rh:
+                view.configure(height=rh)
+            vw = view.winfo_width()
+        except tk.TclError:
+            return
+        if vw <= 1:
+            return
+        over = len(self.tabs) > 1 and rw > vw
+        for w, col in ((self.tab_left, 0), (self.tab_right, 2), (self.tab_more, 3)):
+            if over and not w.winfo_ismapped():
+                w.grid(row=0, column=col, sticky="ns")
+            elif not over and w.winfo_ismapped():
+                w.grid_remove()
+        if over:                                  # 화살표가 생기면 탭 보이는 폭이 줄어듦
+            view.update_idletasks()
+            vw = max(1, view.winfo_width())
+        if not over:
+            self.tab_off = 0
+            nb.place(x=0, y=0, width=max(rw, vw), height=rh)
+            return
+        nb.place(x=-self.tab_off, y=0, width=rw, height=rh)
+        nb.update_idletasks()
+        self._tab_spans = self._tab_spans_now()
+        if self.tab in self.tabs:                         # 고른 탭이 보이게
+            sp = self._tab_spans[self.tabs.index(self.tab)]
+            if sp:
+                if sp[0] < self.tab_off:
+                    self.tab_off = sp[0]
+                elif sp[1] > self.tab_off + vw:
+                    self.tab_off = sp[1] - vw + 2
+        self.tab_off = max(0, min(self.tab_off, rw - vw))
+        nb.place(x=-self.tab_off, y=0, width=rw, height=rh)
+        self.tab_left.state(["!disabled"] if self.tab_off > 0 else ["disabled"])
+        self.tab_right.state(["!disabled"] if self.tab_off < rw - vw else ["disabled"])
+
+    def scroll_tabs(self, d):
+        """◀ ▶: 가려진 탭 하나만큼 옆으로"""
+        vw = self.tab_view.winfo_width()
+        rw = self.tabbar.winfo_reqwidth()
+        spans = [sp for sp in (self._tab_spans or []) if sp]
+        off = self.tab_off
+        if d > 0:
+            nxt = [sp for sp in spans if sp[1] > off + vw + 1]
+            off = (nxt[0][1] - vw + 2) if nxt else rw - vw
+        else:
+            prv = [sp for sp in spans if sp[0] < off - 1]
+            off = prv[-1][0] if prv else 0
+        self.tab_off = max(0, min(off, max(0, rw - vw)))
+        self.tabbar.place(x=-self.tab_off)
+        self.tab_left.state(["!disabled"] if self.tab_off > 0 else ["disabled"])
+        self.tab_right.state(["!disabled"] if self.tab_off < rw - vw else ["disabled"])
+
+    def on_tab_wheel(self, e):
+        if self.tab_right.winfo_ismapped():
+            self.scroll_tabs(-1 if e.delta > 0 else 1)
+        return "break"
+
+    def show_tab_list(self):
+        m = tk.Menu(self.root, tearoff=0)
+        for t in self.tabs:
+            m.add_radiobutton(label=("● " if t._dirty else "") + t.title, value=1 if t is self.tab else 0,
+                              variable=tk.IntVar(value=1), command=lambda t=t: self.switch_tab(t))
+        b = self.tab_more
+        m.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
 
     def tab_at(self, e):
         try:
@@ -3021,6 +3175,7 @@ class App:
     def update_tab_title(self, t):
         if t.frame is not None and t in self.tabs:
             self.tabbar.tab(t.frame, text=(" ● " if t._dirty else " ") + t.title + " ")
+            self.fit_tabs_later()
 
     def ask_save_tab(self, t):
         """닫기 전 확인. 계속해도 되면 True"""
@@ -3044,6 +3199,7 @@ class App:
         i = self.tabs.index(t)
         self.tabs.remove(t)
         self.tabbar.forget(t.frame)
+        self.fit_tabs_later()
         try:
             t.doc.close()
         except Exception:
@@ -3121,31 +3277,71 @@ class App:
         self.draw_selection()
 
     def save(self):
+        """지금 파일에 바로 덮어쓰기 (Ctrl+S). 저장할 수 없는 곳이면 다른 이름으로 저장"""
         if not self.doc:
             return False
-        base, ext = os.path.splitext(self.path)
-        p = filedialog.asksaveasfilename(defaultextension=".pdf", initialfile=os.path.basename(base) + "_수정.pdf",
-                                         initialdir=os.path.dirname(self.path), filetypes=[("PDF", "*.pdf")])
+        if not self.path:
+            return self.save_as()
+        p = self.path
+        tmp = os.path.join(os.path.dirname(p), f".~{os.path.basename(p)}.{os.getpid()}.tmp")
+        try:
+            data = self.doc.tobytes(garbage=3, deflate=True)   # 감춘 글자 등이 파일에 남지 않게 통째로 다시 씀
+            with open(tmp, "wb") as f:                          # 임시 파일에 다 쓴 뒤 바꿔치기 → 도중에 실패해도 원본 안전
+                f.write(data)
+            self.doc.close()
+            try:
+                os.replace(tmp, p)
+            except OSError:
+                self.doc = fitz.open(stream=data, filetype="pdf")   # 고친 내용은 그대로 유지
+                raise
+            self.doc = fitz.open(p)
+        except Exception as ex:
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
+            if messagebox.askyesno(APP, f"이 파일에 저장하지 못했습니다:\n{ex}\n\n"
+                                        "(다른 프로그램에서 열려 있거나 읽기 전용일 수 있습니다)\n"
+                                        "다른 이름으로 저장할까요?"):
+                return self.save_as()
+            return False
+        self.dirty = False
+        self.status.set(f"저장했습니다: {p}")
+        return True
+
+    def save_as(self):
+        """다른 이름으로 저장 (Ctrl+Shift+S) — 저장한 뒤에는 탭이 새 파일을 가리킴"""
+        if not self.doc:
+            return False
+        base = self.path or "새 문서.pdf"
+        p = filedialog.asksaveasfilename(defaultextension=".pdf", initialfile=os.path.basename(base),
+                                         initialdir=os.path.dirname(base) or None, filetypes=[("PDF", "*.pdf")],
+                                         title="다른 이름으로 저장")
         if not p:
             return False
         p = os.path.abspath(p)
+        if self.path and os.path.normcase(p) == os.path.normcase(os.path.abspath(self.path)):
+            return self.save()
+        for t in self.tabs:
+            if t is not self.tab and t.path and os.path.normcase(t.path) == os.path.normcase(p):
+                messagebox.showwarning(APP, "그 파일은 다른 탭에서 열려 있습니다. 그 탭을 닫은 뒤 다시 해 주세요.")
+                return False
         try:
-            if os.path.abspath(p) == os.path.abspath(self.path):
-                data = self.doc.tobytes(garbage=3, deflate=True)
-                self.doc.close()
-                with open(p, "wb") as f:
-                    f.write(data)
-                self.doc = fitz.open(p)
-            else:
-                self.doc.save(p, garbage=3, deflate=True)
-                self.path = p          # 탭은 새로 저장한 파일을 가리킴
-                self.root.title(f"{self.tab.title} - {APP}")
-            self.dirty = False
-            self.status.set(f"저장했습니다: {p}")
-            return True
+            self.doc.save(p, garbage=3, deflate=True)
         except Exception as ex:
             messagebox.showerror(APP, f"저장 실패:\n{ex}")
             return False
+        self.remember_page()
+        self.path = p          # 탭은 새로 저장한 파일을 가리킴
+        self.dirty = False
+        self.update_tab_title(self.tab)
+        self.root.title(f"{self.tab.title} - {APP}")
+        self.add_recent(p)
+        self.update_recent_menu()
+        self.persist()
+        self.status.set(f"저장했습니다: {p}")
+        return True
 
     def on_close(self):
         for t in list(self.tabs):
@@ -3982,7 +4178,7 @@ class App:
         self.page_no = min(self.page_no, len(self.doc) - 1)
         key = (id(self.doc), len(self.doc))
         if self._sizes_key != key:   # 쪽 크기는 파일이 바뀌거나 회전했을 때만 다시 계산
-            self.sizes = [(r.width, r.height) for r in (self.doc[i].rect for i in range(len(self.doc)))]
+            self.sizes = page_sizes_fast(self.doc)
             self._sizes_key = key
         self._memo_pages = self.find_memo_pages() if self.memo_side.get() and self.cols() == 1 else set()
         self.zoom = self.calc_zoom()          # (화면 크기를 읽느라 화면이 한 번 갱신됨 → 지우기 전에)
@@ -4028,8 +4224,7 @@ class App:
             if p not in self.imgs or p not in self.slots:
                 continue
             try:
-                pix = self.doc[p].get_pixmap(matrix=fitz.Matrix(self.zoom, self.zoom), alpha=False)
-                img = tk.PhotoImage(data=base64.b64encode(pix.tobytes("png")))
+                img = page_photo(self.doc[p], self.zoom)
             except Exception:
                 continue
             self.cv.itemconfigure(f"img{p}", image=img)     # 같은 자리에서 그림만 교체
@@ -4078,8 +4273,13 @@ class App:
                 continue
             x, y, w, h = self.slots[p]
             try:
-                pix = self.doc[p].get_pixmap(matrix=fitz.Matrix(self.zoom, self.zoom), alpha=False)
-                img = tk.PhotoImage(data=base64.b64encode(pix.tobytes("png")))
+                page = self.doc[p]
+                r = page.rect
+                if p < len(self.sizes) and (abs(r.width - self.sizes[p][0]) > 0.5
+                                            or abs(r.height - self.sizes[p][1]) > 0.5):
+                    self.sizes[p] = (r.width, r.height)   # 빠르게 잰 크기가 틀렸으면 (드문 경우) 바로잡고 다시 배치
+                    self.root.after_idle(self.render)
+                img = page_photo(page, self.zoom)
             except Exception:
                 continue
             self.imgs[p] = img
@@ -4565,8 +4765,14 @@ class App:
     # ---------- 메모 오른쪽에 펼쳐 보기 ----------
     def find_memo_pages(self):
         out = set()
-        for i in range(len(self.doc)):
-            page = self.doc[i]
+        doc = self.doc
+        for i in range(len(doc)):
+            try:       # 주석(/Annots)이 없는 쪽은 열어 보지 않음 → 큰 파일도 빨리 열림
+                if doc.xref_get_key(doc.page_xref(i), "Annots")[0] == "null":
+                    continue
+            except Exception:
+                pass
+            page = doc[i]
             if any(True for _ in page.annots(types=[fitz.PDF_ANNOT_TEXT]) or []):
                 out.add(i)
         return out
