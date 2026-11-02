@@ -545,12 +545,14 @@ fp.filter.clear()
 pump(0.1)
 check(len(fp.map) == 5, "검색 지우면 전체")
 bp = app.bm_panel
+bp.scope_all.set(True)          # 이 점검은 모든 파일 북마크에서 찾기
 bp.data[:] = [{"type": "mark", "name": "중요 표", "path": pdf1, "page": 11},
               {"type": "mark", "name": "결론", "path": pdf1, "page": 2}]
 bp.refresh()
 bp.filter.var.set("12쪽")
 pump(0.1)
 check([bp.map[i][0]["name"] for i in bp.map] == ["중요 표"], "북마크 쪽 번호로 찾기")
+
 bp.filter.clear()
 rp = app.recent_panel
 rp.refresh()
