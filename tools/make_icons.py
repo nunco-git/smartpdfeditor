@@ -57,6 +57,17 @@ def icons(S):
     rr(d, (5, 10.5, 15, 17.5), 1, fill="#ffffff")
     out["save"] = im
 
+    # 다른 이름으로 저장: 디스켓 + 주황 연필
+    im, d = new()
+    rr(d, (1.5, 2.5, 14.5, 15.5), 2, fill=BLUE)
+    d.rectangle(P(4, 2.5, 11, 6.8), fill="#bbdefb")
+    d.rectangle(P(9, 3.3, 10.4, 6.1), fill=BLUE)
+    rr(d, (4, 9.5, 12, 15.5), 0.8, fill="#ffffff")
+    d.line(P(11.5, 17.5, 18, 11), fill="#ffffff", width=int(4.6 * K))
+    d.line(P(11.5, 17.5, 18, 11), fill=ORANGE, width=int(2.6 * K))
+    d.polygon(P(10.2, 18.8, 11, 16.2, 12.8, 18), fill=S)
+    out["save_as"] = im
+
     # 되돌리기
     im, d = new()
     d.arc(P(4, 5, 17, 17), 200, 450, fill=S, width=W)
