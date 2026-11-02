@@ -1068,9 +1068,12 @@ def print_pages(hdc, doc, pages, title="스마트PDF Editor", output=None, progr
             mat = fitz.Matrix(dpi / 72, dpi / 72)
             if rotate:
                 mat = mat.prerotate(90)
-            pix = page.get_pixmap(matrix=mat, alpha=True)
-            buf = bytearray(pix.samples)
-            buf[0::4], buf[2::4] = buf[2::4], buf[0::4]       # RGBA → BGRA (윈도우 그림 순서)
+            pix = page.get_pixmap(matrix=mat, alpha=False)    # 흰 바탕
+            if pix.n != 3:
+                pix = fitz.Pixmap(fitz.csRGB, pix)
+            rgb = pix.samples
+            buf = bytearray(pix.width * pix.height * 4)          # RGB → BGRX (윈도우 그림 순서, 32비트)
+            buf[0::4], buf[1::4], buf[2::4] = rgb[2::3], rgb[1::3], rgb[0::3]
             bih = api["bih"]()
             bih.biSize = ct.sizeof(api["bih"])
             bih.biWidth, bih.biHeight = pix.width, -pix.height   # 위에서 아래로
