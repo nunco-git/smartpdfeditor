@@ -554,6 +554,7 @@ pump(0.1)
 check([bp.map[i][0]["name"] for i in bp.map] == ["중요 표"], "북마크 쪽 번호로 찾기")
 
 bp.filter.clear()
+bp.scope_all.set(False)
 rp = app.recent_panel
 rp.refresh()
 total = len(rp.tv.get_children())
