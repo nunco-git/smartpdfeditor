@@ -20,17 +20,3 @@ jobs:
         run: |
           python -X faulthandler -u tests/smoke_test.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
-      - name: exe timing
-        shell: pwsh
-        run: |
-          python -m PyInstaller --noconfirm --onefile --windowed --name one --collect-all pymupdf smartpdfeditor.py *> $null
-          python -m PyInstaller --noconfirm --onedir --windowed --name dir --collect-all pymupdf smartpdfeditor.py *> $null
-          "one size MB: " + ((Get-Item dist\one.exe).Length/1MB)
-          foreach ($n in 1..3) {
-            $a = Measure-Command { Start-Process dist\one.exe -ArgumentList "--selftest" -Wait }
-            $b = Measure-Command { Start-Process dist\dir\dir.exe -ArgumentList "--selftest" -Wait }
-            "run $n  onefile {0:N2}s  onedir {1:N2}s" -f $a.TotalSeconds, $b.TotalSeconds
-          }
-          python -m PyInstaller --noconfirm --onefile --windowed --name slim --collect-all pymupdf --exclude-module PIL --exclude-module numpy smartpdfeditor.py *> $null
-          "slim size MB: " + ((Get-Item dist\slim.exe).Length/1MB)
-          foreach ($n in 1..2) { $c = Measure-Command { Start-Process dist\slim.exe -ArgumentList "--selftest" -Wait }; "slim {0:N2}s" -f $c.TotalSeconds }

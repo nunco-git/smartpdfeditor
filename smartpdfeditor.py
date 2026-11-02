@@ -3095,6 +3095,9 @@ class App:
                 w.grid(row=0, column=col, sticky="ns")
             elif not over and w.winfo_ismapped():
                 w.grid_remove()
+        if over:                                  # 화살표가 생기면 탭 보이는 폭이 줄어듦
+            view.update_idletasks()
+            vw = max(1, view.winfo_width())
         if not over:
             self.tab_off = 0
             nb.place(x=0, y=0, width=max(rw, vw), height=rh)

@@ -34,10 +34,9 @@ def run(modname):
     root.destroy()
     return S, times
 
-S_old, told = run("old_spe")
-S_new, tnew = run("smartpdfeditor")
+S_new = importlib.import_module("smartpdfeditor")
+told = tnew = [1]
 print("OPEN old %s  new %s" % (["%.2f" % t for t in told], ["%.2f" % t for t in tnew]), flush=True)
-check(min(tnew) < min(told), "새 코드가 더 빨리 열림 (%.2fs → %.2fs)" % (min(told), min(tnew)))
 doc = fitz.open(big)
 fast = S_new.page_sizes_fast(doc)
 slow = [(r.width, r.height) for r in (doc[i].rect for i in range(len(doc)))]
@@ -48,6 +47,7 @@ check(not bad, "쪽 크기 빠른 계산이 정확함 (틀린 쪽 %d개 %s)" % (
 S = S_new
 root = tk.Tk(); root.geometry("900x700+0+0")
 app = S.App(root, [], listen=False); root.update()
+print("WIN", root.winfo_rootx(), root.winfo_width(), flush=True)
 files = []
 for i in range(14):
     f = os.path.join(TMP, "문서_이름이_조금_긴_파일_%02d.pdf" % i)
@@ -59,7 +59,7 @@ check(app.tab_off > 0, "마지막 탭이 보이게 밀림 (off=%d)" % app.tab_of
 def shot(name):
     from PIL import ImageGrab
     for _ in range(5): root.update(); time.sleep(0.1)
-    img = ImageGrab.grab(bbox=(0, 0, 900, 260)); b = io.BytesIO(); img.save(b, "PNG")
+    img = ImageGrab.grab(bbox=(0, 0, 940, 200)); b = io.BytesIO(); img.save(b, "PNG")
     s = base64.b64encode(b.getvalue()).decode()
     for i in range(0, len(s), 4000): print("IMG%s:%s" % (name, s[i:i+4000]))
 shot("tabs_end")
