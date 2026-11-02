@@ -113,7 +113,7 @@ def stats_call(url, method, body):
         r.read()
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.6"
+APP_VER = "1.0.7"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -2672,8 +2672,9 @@ class App:
                                   command=lambda: self._menu_tab.path and open_folder(self._menu_tab.path))
         self._menu_tab = None
         self.cv = tk.Canvas(wrap, bg="#5a5a5a", highlightthickness=0, yscrollincrement=20, xscrollincrement=20)
-        vs = ttk.Scrollbar(wrap, orient="vertical", command=self.cv.yview)
-        hs = ttk.Scrollbar(wrap, orient="horizontal", command=self.cv.xview)
+        self.page_scroll_style(ttk.Style(self.root))
+        vs = ttk.Scrollbar(wrap, orient="vertical", command=self.cv.yview, style="Page.Vertical.TScrollbar")
+        hs = ttk.Scrollbar(wrap, orient="horizontal", command=self.cv.xview, style="Page.Horizontal.TScrollbar")
         self.vs = vs
 
         def ys(a, b):
@@ -3764,6 +3765,7 @@ class App:
             self._style_set(st, "Top.", top, size)
             base_bg, top_bg = base["bg"], top["bg"]
             self._top_dark, self._base_dark = self._is_dark(top_bg), self._is_dark(base_bg)
+        self.page_scroll_style(st)
         self.root.configure(bg=base_bg)
         top_fg = (self.tcolor("fg") or "black") if self.tcolor("bg") else "black"
         hot = self._tint(self.tcolor("accent"), 0.55) if self.tcolor("accent") else "#cce4f7"
@@ -3804,6 +3806,39 @@ class App:
             pass
 
     # ---------- 탭 닫기(×) 버튼 ----------
+    def page_scroll_style(self, st):
+        """쪽 화면 오른쪽(아래) 스크롤 막대: 지금 위치가 잘 보이게 진한 색 손잡이.
+        Windows 기본 모양은 색을 못 바꾸므로 색을 바꿀 수 있는 모양(clam)을 빌려 씀"""
+        theme = st.theme_use()
+        done = getattr(self, "_page_sb_themes", None)
+        if done is None:
+            done = self._page_sb_themes = set()
+        if theme not in done:
+            for o in ("Vertical", "Horizontal"):
+                for el in ("trough", "thumb", "uparrow", "downarrow", "leftarrow", "rightarrow"):
+                    try:
+                        st.element_create(f"Page.{o}.Scrollbar.{el}", "from", "clam")
+                    except tk.TclError:
+                        pass
+            st.layout("Page.Vertical.TScrollbar", [("Page.Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
+                ("Page.Vertical.Scrollbar.uparrow", {"side": "top", "sticky": ""}),
+                ("Page.Vertical.Scrollbar.downarrow", {"side": "bottom", "sticky": ""}),
+                ("Page.Vertical.Scrollbar.thumb", {"sticky": "nswe", "unit": 1})]})])
+            st.layout("Page.Horizontal.TScrollbar", [("Page.Horizontal.Scrollbar.trough", {"sticky": "we", "children": [
+                ("Page.Horizontal.Scrollbar.leftarrow", {"side": "left", "sticky": ""}),
+                ("Page.Horizontal.Scrollbar.rightarrow", {"side": "right", "sticky": ""}),
+                ("Page.Horizontal.Scrollbar.thumb", {"sticky": "nswe", "unit": 1})]})])
+            done.add(theme)
+        dark = getattr(self, "_base_dark", False)
+        thumb, hot, trough, arrow = (("#b8bcc2", "#e0e3e7", "#2b2b2e", "#b8bcc2") if dark
+                                     else ("#5f6368", "#3c4043", "#e6e6e6", "#5f6368"))
+        for o in ("Vertical", "Horizontal"):
+            name = f"Page.{o}.TScrollbar"
+            st.configure(name, background=thumb, troughcolor=trough, bordercolor=trough, lightcolor=thumb,
+                         darkcolor=thumb, arrowcolor=arrow, gripcount=0, arrowsize=15, relief="flat")
+            st.map(name, background=[("pressed", hot), ("active", hot)],
+                   lightcolor=[("pressed", hot), ("active", hot)], darkcolor=[("pressed", hot), ("active", hot)])
+
     def ensure_tab_close(self, st, force_layout=False):
         """탭 이름 오른쪽에 × 그림을 넣은 탭 모양 (ttk 테마마다 한 번 만듦)"""
         theme = st.theme_use()

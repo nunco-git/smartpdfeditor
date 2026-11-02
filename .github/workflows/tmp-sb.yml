@@ -1,0 +1,42 @@
+name: tmp-sb
+on:
+  push:
+    branches: [test-sb]
+jobs:
+  t:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          python -m pip install --only-binary=:all: -r requirements.txt pillow
+      - env: { PYTHONIOENCODING: utf-8 }
+        run: |
+          @'
+          import os, sys, io, base64, time, tempfile
+          sys.path.insert(0, os.getcwd())
+          import tkinter as tk, pymupdf as fitz, smartpdfeditor as S
+          T = tempfile.mkdtemp()
+          S.CONF_DIR = T; S.CONF_FILE = os.path.join(T, "s.json"); S.AD_URL = ""; S.FIREBASE_DB_URL = ""
+          pdf = os.path.join(T, "a.pdf"); d = fitz.open()
+          for i in range(30): d.new_page().insert_text((72, 72), "page %d" % i)
+          d.save(pdf)
+          root = tk.Tk(); root.geometry("1000x700+0+0"); app = S.App(root, [pdf], listen=False)
+          def shot(name):
+              from PIL import ImageGrab
+              for _ in range(10): root.update(); time.sleep(0.1)
+              vs = app.vs; x, y = vs.winfo_rootx(), vs.winfo_rooty()
+              img = ImageGrab.grab(bbox=(x - 260, y - 40, x + vs.winfo_width() + 4, y + 420))
+              b = io.BytesIO(); img.save(b, "PNG"); s = base64.b64encode(b.getvalue()).decode()
+              for i in range(0, len(s), 4000): print("IMG%s:%s" % (name, s[i:i+4000]), flush=True)
+          def go():
+              app.goto(8)
+              for key in ("gray", "clip", "dark"):
+                  app.theme["preset"] = key
+                  for k in ("bg", "fg", "accent", "canvas"): app.theme.pop(k, None)
+                  app.apply_theme(); shot(key)
+              os._exit(0)
+          root.after(1500, go); root.mainloop()
+          '@ | Set-Content t.py -Encoding utf8
+          python t.py
