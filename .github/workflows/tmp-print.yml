@@ -1,0 +1,70 @@
+name: tmp-print
+on:
+  push:
+    branches: [test-print]
+jobs:
+  t:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          python -m pip install --only-binary=:all: -r requirements.txt pillow
+      - env: { PYTHONIOENCODING: utf-8 }
+        run: |
+          Get-Printer | Select-Object Name | Format-Table -HideTableHeaders
+          @'
+          import os, sys, io, base64, time, tempfile, threading, ctypes
+          sys.path.insert(0, os.getcwd())
+          import tkinter as tk, pymupdf as fitz, smartpdfeditor as S
+          T = tempfile.mkdtemp(); S.CONF_DIR = T; S.CONF_FILE = os.path.join(T, "s.json"); S.AD_URL = ""; S.FIREBASE_DB_URL = ""; S.UPDATE_API = ""
+          src = os.path.join(T, "인쇄시험.pdf"); d = fitz.open()
+          for i in range(3):
+              pg = d.new_page(width=842 if i == 2 else 595, height=595 if i == 2 else 842)
+              pg.insert_text((72, 100), "PAGE %d 인쇄 시험" % (i + 1), fontname="korea", fontsize=30)
+          d.save(src)
+          api = S._print_lib()
+          print("PRINTDLGW size", ctypes.sizeof(api["pd"]), flush=True)
+          root = tk.Tk(); app = S.App(root, [src], listen=False); root.geometry("1000x700+0+0")
+          res = []
+          def check(c, n): res.append(("OK  " if c else "FAIL") + " " + n); print(res[-1], flush=True)
+          def go():
+              try:
+                  for _ in range(20): root.update(); time.sleep(0.05)
+                  app.doc[0].add_highlight_annot(fitz.Rect(70, 70, 400, 110))   # 고친 내용(색칠)도 인쇄되는지
+                  hdc = api["gdi"].CreateDCW("WINSPOOL", "Microsoft Print to PDF", None, None)
+                  check(bool(hdc), "프린터 DC (Microsoft Print to PDF)")
+                  out = os.path.join(T, "출력.pdf")
+                  S.print_pages(hdc, app.doc, [0, 1, 2], title="시험", output=out)
+                  api["gdi"].DeleteDC(hdc)
+                  for _ in range(40):
+                      if os.path.exists(out) and os.path.getsize(out) > 1000: break
+                      time.sleep(0.25)
+                  ok = os.path.exists(out)
+                  n = len(fitz.open(out)) if ok else 0
+                  check(ok and n == 3, "3쪽 인쇄 → PDF %d쪽" % n)
+                  if ok:
+                      o = fitz.open(out)
+                      pix = o[0].get_pixmap(dpi=40); b = io.BytesIO(pix.tobytes("png"))
+                      s = base64.b64encode(b.getvalue()).decode()
+                      for i in range(0, len(s), 4000): print("IMGp1:" + s[i:i+4000], flush=True)
+                      pix = o[2].get_pixmap(dpi=40); s = base64.b64encode(pix.tobytes("png")).decode()
+                      for i in range(0, len(s), 4000): print("IMGp3:" + s[i:i+4000], flush=True)
+                  # 인쇄 창 열고 Esc
+                  u = ctypes.windll.user32
+                  def esc():
+                      time.sleep(2)
+                      from PIL import ImageGrab
+                      img = ImageGrab.grab(); bb = io.BytesIO(); img.save(bb, "PNG"); s = base64.b64encode(bb.getvalue()).decode()
+                      for i in range(0, len(s), 4000): print("IMGdlg:" + s[i:i+4000], flush=True)
+                      u.keybd_event(0x1B, 0, 0, 0); u.keybd_event(0x1B, 0, 2, 0)
+                  threading.Thread(target=esc, daemon=True).start()
+                  got = S.ask_printer(int(root.wm_frame(), 16), 3, 0)
+                  check(got is None and ctypes.windll.comdlg32.CommDlgExtendedError() == 0, "인쇄 창 열고 취소 (오류 없음)")
+              except Exception:
+                  import traceback; traceback.print_exc()
+              print("\n".join(res), flush=True); os._exit(0)
+          root.after(1500, go); root.mainloop()
+          '@ | Set-Content t.py -Encoding utf8
+          python t.py
