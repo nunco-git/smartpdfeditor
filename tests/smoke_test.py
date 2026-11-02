@@ -27,6 +27,7 @@ S.CONF_FILE = os.path.join(S.CONF_DIR, "settings.json")
 S.AD_CACHE = os.path.join(S.CONF_DIR, "ad_cache")
 S.AD_URL = "https://127.0.0.1:9/none.json"   # 광고 서버는 점검에서 제외 (실패해도 조용히 넘어가야 함)
 base_threads = 0
+S.UPDATE_API = ""   # 새 버전 확인은 점검에서 실제로 하지 않음
 stats_sent = []   # 사용 통계는 실제로 보내지 않고 기록만 (점검이 설치 수에 섞이지 않게)
 S.stats_call = lambda url, method, body: stats_sent.append((url, method, body))
 
@@ -722,6 +723,20 @@ res = S.ime_match_font(probe)
 print("     IME 조합 창:", res if res else "IME 없음(영문 Windows) — 오류 없이 넘어감", flush=True)
 check(res is None or res[1] > 8, "조합 창 글꼴 크기")
 probe.destroy()
+
+step("업데이트 필요 버튼")
+app.update_info = {"version": "99.0.0", "date": "2099-01-01", "notes": "### 99.0.0 에서 바뀐 점\n- 시험"}
+app.show_update_btn(); pump(0.3)
+check(app.upd_btn.winfo_ismapped() and "99.0.0" in app.upd_btn.cget("text"), "새 버전이면 버튼 보임")
+app.show_update(); pump(0.3)
+_ups = [w for w in root.winfo_children() if isinstance(w, S.tk.Toplevel) and w.title() == "새 버전"]
+check(bool(_ups), "버튼 누르면 새 버전 창")
+for _w in _ups:
+    _w.destroy()
+app.update_info = None
+app.show_update_btn(); pump(0.2)
+check(not app.upd_btn.winfo_ismapped(), "최신이면 버튼 숨김")
+check(S.ver_tuple("1.0.10") > S.ver_tuple("1.0.9") and S.ver_tuple("v1.1") > S.ver_tuple("1.0.9"), "버전 비교")
 
 step("사용 통계")
 def wait_for(cond, sec=5):
