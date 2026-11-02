@@ -22,7 +22,7 @@ jobs:
           pdf = os.path.join(T, "a.pdf"); d = fitz.open()
           for i in range(30): d.new_page().insert_text((72, 72), "page %d" % i)
           d.save(pdf)
-          root = tk.Tk(); root.geometry("1000x700+0+0"); app = S.App(root, [pdf], listen=False)
+          root = tk.Tk(); app = S.App(root, [pdf], listen=False); root.geometry("860x700+0+0"); root.update(); print("W", root.winfo_width(), root.winfo_screenwidth(), flush=True)
           def shot(name):
               from PIL import ImageGrab
               for _ in range(10): root.update(); time.sleep(0.1)
