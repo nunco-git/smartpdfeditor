@@ -43,6 +43,7 @@ import socket
 import threading
 import uuid
 import queue
+import re
 import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, colorchooser
@@ -64,6 +65,9 @@ APP = "스마트PDF Editor"
 HOME_URL = "https://smartgong.kr"
 SOURCE_URL = "https://github.com/nunco-git/smartpdfeditor"
 RELEASES_URL = SOURCE_URL + "/releases"
+UPDATE_API = "https://api.github.com/repos/nunco-git/smartpdfeditor/releases/latest"   # 새 버전 확인 (비우면 안 함)
+DOWNLOAD_URL = "https://smartgong.kr/download/smart-pdf-editor"                       # 항상 최신 버전 exe
+UPDATE_CHECK_HOURS = 12
 WIN_FONTS = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 UNDO_MAX = 30
 _APPDATA = os.environ.get("APPDATA") or os.path.expanduser("~")
@@ -113,7 +117,7 @@ def stats_call(url, method, body):
         r.read()
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.7"
+APP_VER = "1.0.8"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -887,6 +891,11 @@ def ask_text(parent, title, prompt, initial=""):
     dlg.grab_set()
     dlg.wait_window()
     return res["v"]
+
+
+def ver_tuple(v):
+    nums = re.findall(r"\d+", str(v))[:4]
+    return tuple(int(n) for n in nums) + (0,) * (4 - len(nums))
 
 
 def page_sizes_fast(doc):
@@ -2243,6 +2252,94 @@ class App:
         self.set_app_mode()
         self.root.after(200, self.poll_ipc)
         self.root.after(3000, self.send_stats)
+        saved = self.conf["prefs"].get("update_avail")
+        self.update_info = saved if isinstance(saved, dict) and \
+            ver_tuple(saved.get("version", "0")) > ver_tuple(APP_VERSION) else None
+        self.root.after_idle(self.show_update_btn)
+        self.root.after(4000, self.check_update)
+
+    # ---------- 새 버전 확인 ----------
+    def check_update(self, force=False):
+        """깃허브 최신 릴리스 번호 확인 (12시간에 한 번). 새 버전이면 [⬆ 업데이트 필요] 버튼 표시"""
+        pr = self.conf["prefs"]
+        if not UPDATE_API:
+            return
+        if not force and time.time() - pr.get("update_checked", 0) < UPDATE_CHECK_HOURS * 3600 - 60:
+            self.root.after(3600 * 1000, self.check_update)
+            return
+        box = {}
+
+        def work():
+            try:
+                req = urllib.request.Request(UPDATE_API, headers={"User-Agent": f"smartpdfeditor/{APP_VER}",
+                                                                  "Accept": "application/vnd.github+json"})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    rel = json.loads(r.read(1024 * 1024).decode("utf-8"))
+                tag = str(rel.get("tag_name", "")).lstrip("vV")
+                if tag and not rel.get("draft") and not rel.get("prerelease"):
+                    box["info"] = ({"version": tag, "date": str(rel.get("published_at") or "")[:10],
+                                    "notes": str(rel.get("body") or "")[:3000]}
+                                   if ver_tuple(tag) > ver_tuple(APP_VER) else None)
+            except Exception:
+                pass
+            box["done"] = True
+        threading.Thread(target=work, daemon=True).start()
+
+        def wait(n=0):
+            if not box.get("done") and n < 60:
+                self.root.after(500, lambda: wait(n + 1))
+                return
+            if "info" in box:
+                pr["update_checked"] = time.time()
+                pr["update_avail"] = box["info"]
+                self.update_info = box["info"]
+                self.show_update_btn()
+        self.root.after(500, wait)
+        if not force:
+            self.root.after(UPDATE_CHECK_HOURS * 3600 * 1000, self.check_update)
+
+    def show_update_btn(self):
+        info = getattr(self, "update_info", None)
+        try:
+            if info:
+                self.upd_btn.configure(text=f"⬆ 업데이트 필요 (v{info['version']})")
+                if not self.upd_btn.winfo_ismapped():
+                    self.upd_btn.pack(side="right", padx=(6, 2), after=self._help_link)
+            else:
+                self.upd_btn.pack_forget()
+        except tk.TclError:
+            pass
+
+    def show_update(self):
+        info = getattr(self, "update_info", None)
+        if not info:
+            return
+        dlg = Popup(self.root)
+        dlg.title("새 버전")
+        dlg.transient(self.root)
+        f = ttk.Frame(dlg, padding=16)
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, text=f"⬆ {APP} 새 버전 v{info['version']}", font=("맑은 고딕", 13, "bold")).pack(anchor="w")
+        ttk.Label(f, text=f"지금 쓰는 버전: v{APP_VER}" + (f"   ·   나온 날: {info['date']}" if info.get("date") else ""),
+                  foreground="#777").pack(anchor="w", pady=(2, 8))
+        notes = info.get("notes") or ""
+        i = notes.find("### ")
+        if i >= 0:
+            notes = notes[i:]
+        if notes:
+            tx = tk.Text(f, height=12, width=72, wrap="word", font=("맑은 고딕", 10), relief="solid", bd=1)
+            tx.insert("1.0", notes)
+            tx.configure(state="disabled")
+            tx.pack(fill="both", expand=True)
+        ttk.Label(f, text="받은 smartpdfeditor.exe 를 지금 쓰는 파일 자리에 바꿔 넣고 다시 실행하세요.\n"
+                          "(설정·즐겨찾기·북마크는 그대로 이어집니다)", foreground="#b0412b",
+                  justify="left").pack(anchor="w", pady=(8, 0))
+        bf = ttk.Frame(f)
+        bf.pack(fill="x", pady=(10, 0))
+        ttk.Button(bf, text="나중에", command=dlg.destroy).pack(side="right")
+        ttk.Button(bf, text="⬇ 새 버전 내려받기", command=lambda: (webbrowser.open(DOWNLOAD_URL), dlg.destroy())).pack(
+            side="right", padx=4)
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
 
     # ---------- 사용 통계 ----------
     def send_stats(self):
@@ -2440,7 +2537,7 @@ class App:
         hm2.add_command(label="사용방법", accelerator="F1", command=self.show_help, image=self.menu_icon("help"),
                         compound="left")
         hm2.add_command(label="smartgong.kr 바로가기", command=lambda: webbrowser.open(HOME_URL))
-        hm2.add_command(label="새 버전 내려받기", command=lambda: webbrowser.open(RELEASES_URL))
+        hm2.add_command(label="새 버전 내려받기", command=lambda: webbrowser.open(DOWNLOAD_URL))
         hm2.add_separator()
         hm2.add_command(label="정보 · 라이선스", command=self.show_about)
         hm2.add_separator()
@@ -2591,6 +2688,12 @@ class App:
         Tooltip(logo, "smartgong.kr 바로가기")
         hl = tk.Label(right, text="사용방법", fg="#1565c0", cursor="hand2", font=("맑은 고딕", 9, "underline"))
         hl.pack(side="right", padx=(6, 4))
+        self._help_link = hl
+        # 새 버전이 있을 때만 나타나는 [⬆ 업데이트 필요] 버튼
+        self.upd_btn = tk.Button(right, text="⬆ 업데이트 필요", command=self.show_update, bg="#e8590c", fg="white",
+                                 activebackground="#c44a07", activeforeground="white", relief="flat", bd=0,
+                                 padx=8, pady=1, cursor="hand2", font=("맑은 고딕", 9, "bold"))
+        Tooltip(self.upd_btn, "새 버전이 나왔습니다 — 눌러서 내려받기")
         self.themed_labels.append((hl, True))
         hl.bind("<Button-1>", lambda e: self.show_help())
         for val, ic, txt, tip in (("edit", "m_edit", "편집", "편집 모드: 글자 수정·색칠·도형 등 (F4)"),
