@@ -1,0 +1,44 @@
+name: tmp-bm
+on:
+  push:
+    branches: [test-bm]
+jobs:
+  t:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          python -m pip install --only-binary=:all: -r requirements.txt pillow
+      - env: { PYTHONIOENCODING: utf-8 }
+        run: |
+          @'
+          import os, sys, io, base64, time, tempfile
+          sys.path.insert(0, os.getcwd())
+          import tkinter as tk, pymupdf as fitz, smartpdfeditor as S
+          T = tempfile.mkdtemp(); S.CONF_DIR = T; S.CONF_FILE = os.path.join(T, "s.json"); S.AD_URL = ""; S.FIREBASE_DB_URL = ""; S.UPDATE_API = ""
+          fa = os.path.join(T, "2026 예산안.pdf"); fb = os.path.join(T, "업무보고.pdf")
+          for f in (fa, fb):
+              d = fitz.open()
+              for i in range(12): d.new_page()
+              d.save(f)
+          root = tk.Tk(); app = S.App(root, [], listen=False); root.geometry("1000x600+0+0")
+          app.conf["bookmarks"] += [{"type": "mark", "name": "인건비", "path": fa, "page": 2},
+                                    {"type": "mark", "name": "사업비 총괄", "path": fa, "page": 11},
+                                    {"type": "mark", "name": "주요 성과", "path": fb, "page": 0}]
+          def shot(name):
+              from PIL import ImageGrab
+              for _ in range(8): root.update(); time.sleep(0.1)
+              w = app.side; x, y = w.winfo_rootx(), w.winfo_rooty()
+              img = ImageGrab.grab(bbox=(x, y - 30, x + w.winfo_width() + 520, y + 230))
+              b = io.BytesIO(); img.save(b, "PNG"); s = base64.b64encode(b.getvalue()).decode()
+              for i in range(0, len(s), 4000): print("IMG%s:%s" % (name, s[i:i+4000]), flush=True)
+          def go():
+              app.open_file(fa); app.open_file(fb); app.side.select(app.bm_panel)
+              app.switch_tab(app.tabs[0]); shot("a")
+              app.switch_tab(app.tabs[1]); shot("b")
+              os._exit(0)
+          root.after(1500, go); root.mainloop()
+          '@ | Set-Content t.py -Encoding utf8
+          python t.py
