@@ -117,7 +117,7 @@ def stats_call(url, method, body):
         r.read()
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.8"
+APP_VER = "1.0.9"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -303,6 +303,7 @@ HELP_SECTIONS = [
         ("키", "Ctrl+D", "지금 파일을 즐겨찾기에 추가"),
         ("키", "Ctrl+B", "북마크 추가 — 글자를 선택해 두면 묻지 않고 그 글자 이름으로, 그 위치로 바로 추가"),
         "더블클릭하면 열기(북마크는 그 쪽·그 위치로). 폴더를 만들고 끌어서 정리합니다.",
+        "북마크는 파일마다 따로 — 북마크 탭에는 지금 보고 있는 파일의 북마크만 보이고, 다른 탭(파일)을 고르면 그 파일 것으로 바뀝니다. 위쪽 '모든 파일'을 체크하면 전체가 보입니다.",
         "줄 끝 × 로 바로 삭제 · 오른쪽 클릭: 열기 · 이름 바꾸기(F2) · 삭제 · 새 폴더",
         "Ctrl·Shift+클릭으로 여러 개 골라 Delete로 한꺼번에 삭제, Ctrl+A 전체 선택",
         "목록 위 🔍 칸에 입력하면 이름·경로(북마크는 쪽 번호도)로 바로 걸러 보입니다. Esc로 지우기",
@@ -494,6 +495,13 @@ class TreePanel(ttk.Frame):
         db = ttk.Button(bar, text="삭제", width=4, command=self.delete)
         db.pack(side="left", padx=2)
         Tooltip(db, "선택한 항목 삭제 (Ctrl·Shift+클릭으로 여러 개 선택, Ctrl+A 전체 선택)")
+        self.scope = None                       # 파일별 보기: 함수() → 지금 파일 경로 (북마크 탭에서 씀)
+        self.scope_all = tk.BooleanVar(value=False)
+        self.scope_bar = ttk.Frame(self)
+        self.scope_lbl = ttk.Label(self.scope_bar, text="", foreground="#5f6368")
+        self.scope_lbl.pack(side="left", fill="x", expand=True)
+        ttk.Checkbutton(self.scope_bar, text="모든 파일", variable=self.scope_all,
+                        command=lambda: self.refresh()).pack(side="right")
         self.filter = FilterBox(self, lambda: self.refresh())
         self.filter.pack(fill="x", pady=(0, 3))
         self.tv = ttk.Treeview(self, show="tree", selectmode="extended", columns=("x",))
@@ -531,6 +539,11 @@ class TreePanel(ttk.Frame):
         flt = getattr(self, "filter", None)
         searching = bool(flt and flt.words())
         found = 0
+        cur = self.scope_path()
+        in_scope = 0
+
+        def mine(n):
+            return cur is None or (n.get("path") and os.path.normcase(n["path"]) == cur)
 
         def put(parent, nodes):
             """넣은(검색에 맞는) 항목 수를 돌려줌. 검색 중에는 맞는 항목과 그 폴더만 보임"""
@@ -542,12 +555,16 @@ class TreePanel(ttk.Frame):
                                          open=True if searching else n.get("open", True), values=("✕",))
                     self.map[iid] = (n, nodes)
                     inner = put(iid, n.setdefault("children", []))
-                    if searching and not inner and not flt.match(n.get("name")):
-                        self.tv.delete(iid)          # 맞는 것이 없는 폴더는 숨김
+                    if (searching and not inner and not flt.match(n.get("name"))) or \
+                            (cur is not None and not inner and not mine(n)):
+                        self.tv.delete(iid)          # 맞는 것이 없는 폴더(다른 파일 폴더)는 숨김
                         del self.map[iid]
                         continue
                     shown += max(inner, 1)
                 else:
+                    if not mine(n):                  # 다른 파일의 북마크는 숨김
+                        continue
+                    nonlocal_count[0] += 1
                     if searching and not flt.match(n.get("name"), n.get("path"),
                                                    f"{int(n.get('page', -1)) + 1}쪽" if "page" in n else ""):
                         continue
@@ -560,12 +577,34 @@ class TreePanel(ttk.Frame):
                 if n is select:
                     sel_iid = iid
             return shown
+        nonlocal_count = [0]
         put("", self.data)
+        in_scope = nonlocal_count[0]
         if flt:
-            flt.show_count(found, count_items(self.data))
+            flt.show_count(found, in_scope if cur is not None else count_items(self.data))
+        self._scope_info(cur, in_scope)
         if sel_iid:
             self.tv.selection_set(sel_iid)
             self.tv.see(sel_iid)
+
+    def scope_path(self):
+        """파일별 보기 중이면 지금 파일 경로(normcase), 아니면 None"""
+        if self.scope is None or self.scope_all.get():
+            return None
+        p = self.scope()
+        return os.path.normcase(os.path.abspath(p)) if p else None
+
+    def _scope_info(self, cur, n):
+        if self.scope is None:
+            return
+        if not self.scope_bar.winfo_ismapped():
+            self.scope_bar.pack(fill="x", pady=(0, 3), before=self.filter)
+        p = self.scope()
+        if self.scope_all.get() or not p:
+            self.scope_lbl.config(text=f"모든 파일의 북마크 {count_items(self.data)}개")
+        else:
+            name = os.path.basename(p)
+            self.scope_lbl.config(text=f"📄 {name[:28] + '…' if len(name) > 29 else name} · {n}개")
 
     def selected(self):
         sel = self.tv.selection()
@@ -614,6 +653,8 @@ class TreePanel(ttk.Frame):
         name = ask_text(self, "새 폴더", "폴더 이름", "새 폴더")
         if name:
             node = {"type": "folder", "name": name, "open": True, "children": []}
+            if self.scope_path() is not None:      # 파일별 보기에서 만든 폴더는 그 파일에 딸림
+                node["path"] = self.scope()
             self.target_container().append(node)
             self.changed(node)
 
@@ -2717,6 +2758,8 @@ class App:
         self.bm_panel = TreePanel(self.side, self.conf["bookmarks"], self.new_bookmark, self.open_bookmark,
                                   lambda n: f"🔖 {n.get('name', '')}", self.persist, "＋ 북마크 추가")
         self.fav_panel.app = self.bm_panel.app = self
+        self.bm_panel.scope = lambda: self.path if self.doc else None    # 북마크는 지금 파일 것만 보임
+        self.bm_panel.refresh()
         self.side.add(self.fav_panel, text="즐겨찾기")
         self.side.add(self.bm_panel, text="북마크")
         self.recent_panel = RecentPanel(self.side, self)
@@ -3164,6 +3207,10 @@ class App:
             self.cv.delete("all")
             self.imgs.clear()
         self.tab = t
+        try:
+            self.bm_panel.refresh()                 # 북마크 탭: 고른 파일의 북마크만
+        except (AttributeError, tk.TclError):
+            pass
         if t.frame is not None and self.tabbar.select() != str(t.frame):
             self.tabbar.select(t.frame)
         self.fit_tabs_later()
@@ -3462,6 +3509,15 @@ class App:
             messagebox.showerror(APP, f"저장 실패:\n{ex}")
             return False
         self.remember_page()
+        old = self.path
+        if old:                # 북마크도 새 파일로 따라가게 복사 (원래 파일 북마크는 그대로)
+            def copy_marks(nodes):
+                for n in list(nodes):
+                    if n.get("type") == "folder":
+                        copy_marks(n.get("children", []))
+                    elif n.get("path") and os.path.normcase(n["path"]) == os.path.normcase(old):
+                        nodes.append(dict(n, path=p))
+            copy_marks(self.conf["bookmarks"])
         self.path = p          # 탭은 새로 저장한 파일을 가리킴
         self.dirty = False
         self.update_tab_title(self.tab)
@@ -3469,6 +3525,7 @@ class App:
         self.add_recent(p)
         self.update_recent_menu()
         self.persist()
+        self.bm_panel.refresh()
         self.status.set(f"저장했습니다: {p}")
         return True
 

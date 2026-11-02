@@ -724,6 +724,28 @@ print("     IME 조합 창:", res if res else "IME 없음(영문 Windows) — �
 check(res is None or res[1] > 8, "조합 창 글꼴 크기")
 probe.destroy()
 
+step("북마크는 파일마다 따로")
+_fa = os.path.join(TMP, "북마크A.pdf"); _fb = os.path.join(TMP, "북마크B.pdf")
+for _f in (_fa, _fb):
+    _d = fitz.open(); _d.new_page(); _d.new_page(); _d.save(_f)
+app.conf["bookmarks"].append({"type": "mark", "name": "A의 북마크", "path": _fa, "page": 1})
+app.conf["bookmarks"].append({"type": "mark", "name": "B의 북마크", "path": _fb, "page": 0})
+app.open_file(_fa); pump(0.3)
+_names = [app.bm_panel.tv.item(i, "text") for i in app.bm_panel.tv.get_children()]
+check(any("A의" in n for n in _names) and not any("B의" in n for n in _names), "A 파일엔 A 북마크만")
+app.open_file(_fb); pump(0.3)
+_names = [app.bm_panel.tv.item(i, "text") for i in app.bm_panel.tv.get_children()]
+check(any("B의" in n for n in _names) and not any("A의" in n for n in _names), "B 탭으로 바꾸면 B 북마크만")
+app.bm_panel.scope_all.set(True); app.bm_panel.refresh()
+_names = [app.bm_panel.tv.item(i, "text") for i in app.bm_panel.tv.get_children()]
+check(any("A의" in n for n in _names) and any("B의" in n for n in _names), "'모든 파일' 체크하면 전체")
+app.bm_panel.scope_all.set(False); app.bm_panel.refresh()
+for _t in [t for t in app.tabs if t.path in (_fa, _fb)]:
+    _t._dirty = False
+    app.close_tab(_t)
+app.conf["bookmarks"][:] = [n for n in app.conf["bookmarks"] if n.get("path") not in (_fa, _fb)]
+app.bm_panel.refresh(); pump(0.2)
+
 step("업데이트 필요 버튼")
 app.update_info = {"version": "99.0.0", "date": "2099-01-01", "notes": "### 99.0.0 에서 바뀐 점\n- 시험"}
 app.show_update_btn(); pump(0.3)
