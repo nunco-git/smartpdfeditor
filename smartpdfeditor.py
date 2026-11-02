@@ -3815,18 +3815,14 @@ class App:
             done = self._page_sb_themes = set()
         if theme not in done:
             for o in ("Vertical", "Horizontal"):
-                for el in ("trough", "thumb", "uparrow", "downarrow", "leftarrow", "rightarrow"):
+                for el in ("trough", "thumb"):
                     try:
                         st.element_create(f"Page.{o}.Scrollbar.{el}", "from", "clam")
                     except tk.TclError:
                         pass
             st.layout("Page.Vertical.TScrollbar", [("Page.Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
-                ("Page.Vertical.Scrollbar.uparrow", {"side": "top", "sticky": ""}),
-                ("Page.Vertical.Scrollbar.downarrow", {"side": "bottom", "sticky": ""}),
                 ("Page.Vertical.Scrollbar.thumb", {"sticky": "nswe", "unit": 1})]})])
             st.layout("Page.Horizontal.TScrollbar", [("Page.Horizontal.Scrollbar.trough", {"sticky": "we", "children": [
-                ("Page.Horizontal.Scrollbar.leftarrow", {"side": "left", "sticky": ""}),
-                ("Page.Horizontal.Scrollbar.rightarrow", {"side": "right", "sticky": ""}),
                 ("Page.Horizontal.Scrollbar.thumb", {"sticky": "nswe", "unit": 1})]})])
             done.add(theme)
         dark = getattr(self, "_base_dark", False)
@@ -3835,7 +3831,7 @@ class App:
         for o in ("Vertical", "Horizontal"):
             name = f"Page.{o}.TScrollbar"
             st.configure(name, background=thumb, troughcolor=trough, bordercolor=trough, lightcolor=thumb,
-                         darkcolor=thumb, arrowcolor=arrow, gripcount=0, arrowsize=15, relief="flat")
+                         darkcolor=thumb, arrowcolor=arrow, gripcount=0, arrowsize=16, relief="flat")
             st.map(name, background=[("pressed", hot), ("active", hot)],
                    lightcolor=[("pressed", hot), ("active", hot)], darkcolor=[("pressed", hot), ("active", hot)])
 
