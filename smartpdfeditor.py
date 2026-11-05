@@ -67,7 +67,7 @@ SOURCE_URL = "https://github.com/nunco-git/smartpdfeditor"
 RELEASES_URL = SOURCE_URL + "/releases"
 UPDATE_API = "https://api.github.com/repos/nunco-git/smartpdfeditor/releases/latest"   # 새 버전 확인 (비우면 안 함)
 DOWNLOAD_URL = "https://smartgong.kr/download/smart-pdf-editor"                       # 항상 최신 버전 exe
-UPDATE_CHECK_HOURS = 12
+UPDATE_CHECK_HOURS = 3
 WIN_FONTS = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 UNDO_MAX = 30
 _APPDATA = os.environ.get("APPDATA") or os.path.expanduser("~")
@@ -117,7 +117,7 @@ def stats_call(url, method, body):
         r.read()
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.11"
+APP_VER = "1.0.12"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -2521,11 +2521,11 @@ class App:
         self.update_info = saved if isinstance(saved, dict) and \
             ver_tuple(saved.get("version", "0")) > ver_tuple(APP_VERSION) else None
         self.root.after_idle(self.show_update_btn)
-        self.root.after(4000, self.check_update)
+        self.root.after(4000, lambda: self.check_update(force=True))   # 켤 때마다 확인
 
     # ---------- 새 버전 확인 ----------
     def check_update(self, force=False):
-        """깃허브 최신 릴리스 번호 확인 (12시간에 한 번). 새 버전이면 [업데이트 필요] 버튼 표시"""
+        """깃허브 최신 릴리스 번호 확인 (켤 때, 그 뒤 3시간마다). 새 버전이면 [업데이트 필요] 버튼 표시"""
         pr = self.conf["prefs"]
         if not UPDATE_API:
             return
