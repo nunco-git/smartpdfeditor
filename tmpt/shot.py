@@ -19,7 +19,7 @@ def go():
     nb.select(1)
     grab(dlg, "IMG1")
     app._settings_dlg[2].set(S.THEMES["sky"]["name"])
-    app._settings_dlg[1]["wall"].set(S.wall_preset_path("노을"))
+    app._settings_dlg[1]["wall"].set(S.photo_wall_path("호수"))
     app._settings_dlg[3]()
     root.update(); time.sleep(0.5)
     grab(root, "IMG2")
