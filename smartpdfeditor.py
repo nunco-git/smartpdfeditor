@@ -2650,7 +2650,7 @@ class App:
         self.root.after(3000, self.send_stats)
         saved = self.conf["prefs"].get("update_avail")
         self.update_info = saved if isinstance(saved, dict) and \
-            ver_tuple(saved.get("version", "0")) > ver_tuple(APP_VERSION) else None
+            ver_tuple(saved.get("version", "0")) > ver_tuple(APP_VER) else None
         self.root.after_idle(self.show_update_btn)
         self.root.after(4000, lambda: self.check_update(force=True))   # 켤 때마다 확인
 
