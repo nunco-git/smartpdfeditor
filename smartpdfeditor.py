@@ -250,7 +250,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.16"
+APP_VER = "1.0.17"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -3181,12 +3181,12 @@ class App:
         self._menu_tab = None
         self.cv = tk.Canvas(wrap, bg="#5a5a5a", highlightthickness=0, yscrollincrement=20, xscrollincrement=20)
         self.page_scroll_style(ttk.Style(self.root))
-        vs = ttk.Scrollbar(wrap, orient="vertical", command=self.cv.yview, style="Page.Vertical.TScrollbar")
+        vs = ttk.Scrollbar(wrap, orient="vertical", command=self.vscroll_cmd, style="Page.Vertical.TScrollbar")
         hs = ttk.Scrollbar(wrap, orient="horizontal", command=self.cv.xview, style="Page.Horizontal.TScrollbar")
         self.vs = vs
 
         def ys(a, b):
-            vs.set(a, b)
+            self.set_vscroll(a, b)
             self.schedule_visible()
 
         def xs(a, b):
@@ -4897,6 +4897,65 @@ class App:
         total_h = y - GAP + MARGIN
         return total_w, total_h
 
+    # ---------- 오른쪽 스크롤바: 문서 전체에서의 위치 ----------
+    def _single_scroll(self):
+        """'한 쪽씩' 보기는 화면에 한 쪽만 그려서, 스크롤바를 그대로 쓰면 그 쪽 안의 위치만 보임
+        → 전체 쪽수 기준(쪽 번호 + 쪽 안 위치)으로 환산해서 보여줌"""
+        return self.view == "single" and bool(self.doc) and len(self.doc) > 1
+
+    def set_vscroll(self, a, b):
+        a, b = float(a), float(b)
+        if not self._single_scroll():
+            self.vs.set(a, b)
+            return
+        n = len(self.doc)
+        v = max(0.0, min(1.0, b - a))
+        L = max(v / n, 0.04)                      # 손잡이가 너무 작아지지 않게
+        room = 1 - v / n
+        pos = (self.page_no + a) / n              # 0 ~ (1 - v/n)
+        f0 = pos * (1 - L) / room if room > 1e-9 else 0.0
+        f0 = max(0.0, min(1 - L, f0))
+        self.vs.set(f0, f0 + L)
+
+    def update_vscroll(self):
+        a, b = self.cv.yview()
+        self.set_vscroll(a, b)
+
+    def vscroll_cmd(self, *args):
+        """스크롤바를 끌거나 누를 때 (args: 'moveto', 위치 / 'scroll', 칸수, 단위)"""
+        if not args:
+            return
+        if not self._single_scroll():
+            self.cv.yview(*args)
+            return
+        if args[0] == "moveto":
+            n = len(self.doc)
+            a, b = self.cv.yview()
+            v = max(0.0, min(1.0, b - a))
+            L = max(v / n, 0.04)
+            room = 1 - v / n
+            pos = float(args[1]) * room / (1 - L) if L < 1 else 0.0
+            t = max(0.0, min(n - v, pos * n))     # 쪽 번호 + 쪽 안 위치
+            p = max(0, min(n - 1, int(t)))
+            within = max(0.0, min(1 - v, t - p))
+            if p != self.page_no:
+                self.page_no = p
+                self.render(goto=p)
+            self.cv.yview_moveto(within)
+            self.update_page_label()
+        elif args[0] == "scroll":
+            amount, what = int(args[1]), args[2]
+            if what == "pages":                   # 빈 곳 누르기 = 한 화면씩, 끝에 닿으면 다음/이전 쪽
+                top, bot = self.cv.yview()
+                if amount > 0 and bot >= 0.999:
+                    self.go(1)
+                    return
+                if amount < 0 and top <= 0.001 and self.page_no > 0:
+                    self.go(-1)
+                    self.cv.yview_moveto(1.0)
+                    return
+            self.cv.yview(*args)
+
     def render(self, goto=None):
         """전체 다시 그리기. goto: 이 쪽으로 이동 / None: 지금 스크롤 위치 유지
         계산을 모두 끝낸 뒤에 화면을 지우고 바로 다시 그려서 번쩍임이 없게 함"""
@@ -4935,6 +4994,7 @@ class App:
             self.cv.yview_moveto(yfrac)
             self.cv.xview_moveto(xfrac)
         self.update_page_label()
+        self.update_vscroll()
         self.update_visible()
         self.draw_selection()
         self._sync_page = True
