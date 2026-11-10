@@ -4,6 +4,9 @@ name: 릴리스 (exe 배포)
 on:
   push:
     tags: ["v*"]
+    # main에 올릴 때 smartpdfeditor.py 의 APP_VER 가 새 번호면 태그·릴리스를 자동으로 만듦 (이미 있는 번호면 건너뜀)
+    branches: [main]
+    paths: ["smartpdfeditor.py", ".github/workflows/release.yml"]
   workflow_dispatch:
     inputs:
       tag:
@@ -24,36 +27,58 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: 배포할 버전 정하기
+        id: ver
+        shell: python
+        run: |
+          import os, re, subprocess
+          src = open("smartpdfeditor.py", encoding="utf-8").read()
+          tag = "${{ github.event.inputs.tag }}" or ("${{ github.ref_name }}" if "${{ github.ref_type }}" == "tag" else "v" + re.search(r'^APP_VER = "([^"]+)"', src, re.M).group(1))
+          skip = False
+          if "${{ github.ref_type }}" == "branch" and not "${{ github.event.inputs.tag }}":
+              r = subprocess.run(["git", "ls-remote", "--exit-code", "--tags", "origin", "refs/tags/" + tag], capture_output=True)
+              skip = r.returncode == 0                      # 이미 배포한 번호
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"tag={tag}\nskip={'1' if skip else '0'}\n")
+          print("배포 태그:", tag, "| 건너뜀:" , skip)
+
       - name: 필요한 프로그램 설치
+        if: steps.ver.outputs.skip != '1'
         run: |
           python -m pip install --upgrade pip
           python -m pip install --only-binary=:all: -r requirements.txt
 
       - name: 기능 점검
+        if: steps.ver.outputs.skip != '1'
         env:
           PYTHONIOENCODING: utf-8
         run: python tests/smoke_test.py
 
       - name: 버전 정보 만들기
+        if: steps.ver.outputs.skip != '1'
         run: python tools/make_version_info.py
 
       - name: exe 만들기
+        if: steps.ver.outputs.skip != '1'
         run: >
           python -m PyInstaller --noconfirm --clean --onefile --windowed
           --name smartpdfeditor --icon smartpdfeditor.ico --version-file version_info.txt
           --collect-all pymupdf smartpdfeditor.py
 
       - name: exe 점검
+        if: steps.ver.outputs.skip != '1'
         shell: pwsh
         run: |
           $p = Start-Process -FilePath dist\smartpdfeditor.exe -ArgumentList "--selftest" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "selftest 실패: 종료코드 $($p.ExitCode)" }
 
       - name: Releases에 올리기
+        if: steps.ver.outputs.skip != '1'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          name: 스마트PDF Editor ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: 스마트PDF Editor ${{ steps.ver.outputs.tag }}
           body_path: docs/release-notes.md
           files: |
             dist/smartpdfeditor.exe
