@@ -30,6 +30,8 @@ jobs:
       - name: 배포할 버전 정하기
         id: ver
         shell: python
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           import os, re, subprocess
           src = open("smartpdfeditor.py", encoding="utf-8").read()
@@ -40,7 +42,7 @@ jobs:
               skip = r.returncode == 0                      # 이미 배포한 번호
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"tag={tag}\nskip={'1' if skip else '0'}\n")
-          print("배포 태그:", tag, "| 건너뜀:" , skip)
+          print("release tag:", tag, "| skip:", skip)
 
       - name: 필요한 프로그램 설치
         if: steps.ver.outputs.skip != '1'
