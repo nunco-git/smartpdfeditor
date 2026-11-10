@@ -250,7 +250,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.17"
+APP_VER = "1.0.18"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -365,7 +365,7 @@ HELP_SECTIONS = [
     ]),
     ("화면 구성", "m_view", [
         "위 도구줄 — 열기·저장·되돌리기 | 쪽 이동 | 확대·축소 | 회전 | 편집 도구 | 오른쪽: 뷰어/편집 전환 · 사용방법 · 스마트공",
-        "왼쪽 사이드바 (F9로 숨기기) — 즐겨찾기 · 북마크 · 최근 · 검색, 맨 아래 광고 칸(광고가 없으면 접힘)",
+        "왼쪽 사이드바 (F9로 숨기기) — 즐겨찾기 · 북마크 · 검색 · 최근, 맨 아래 광고 칸(광고가 없으면 접힘)",
         "아래 상태줄 — 왼쪽: 지금 할 수 있는 일 안내 / 오른쪽: 맞춤(↔ ↕)과 보기 방식 아이콘",
         "창이 좁으면 도구 버튼이 둘째 줄로 내려가서 잘리지 않습니다.",
         "모든 대화상자는 누른 메뉴·버튼 가까이에 뜹니다.",
@@ -440,8 +440,8 @@ HELP_SECTIONS = [
         "북마크는 파일마다 따로 — 북마크 탭에는 지금 보고 있는 파일의 북마크만 보이고, 다른 탭(파일)을 고르면 그 파일 것으로 바뀝니다. 위쪽 '모든 파일'을 체크하면 전체가 보입니다.",
         "줄 끝 × 로 바로 삭제 · 오른쪽 클릭: 열기 · 이름 바꾸기(F2) · 삭제 · 새 폴더",
         "Ctrl·Shift+클릭으로 여러 개 골라 Delete로 한꺼번에 삭제, Ctrl+A 전체 선택",
-        "목록 위 🔍 칸에 입력하면 이름·경로(북마크는 쪽 번호도)로 바로 걸러 보입니다. Esc로 지우기",
-        "[최근] 탭: 최근 본 파일 200개 · 마지막으로 본 쪽 · 열어본 시각 — 🔍 칸으로 파일 이름·날짜 찾기",
+        "목록 위 🔍 칸(즐겨찾기 검색 · 북마크 검색 · 최근파일 검색)에 입력하면 이름·경로(북마크는 쪽 번호도)로 바로 걸러 보입니다. Esc로 지우기",
+        "[최근] 탭(맨 오른쪽): 최근 본 파일 200개 · 마지막으로 본 쪽 · 열어본 시각 — 🔍 칸으로 파일 이름·날짜 찾기",
         ("주", "모두 자동으로 저장됩니다: %APPDATA%\\smartpdfeditor\\settings.json  (파일은 경로만 기억하므로 옮기면 회색으로 표시)"),
     ]),
     ("설정·화면 꾸미기", "gear", [
@@ -577,15 +577,21 @@ def contains_node(root, node):
 class FilterBox(ttk.Frame):
     """목록 위 검색칸: 입력하는 대로 이름·경로로 걸러 보임 (Esc = 지우기)"""
 
-    def __init__(self, master, on_change, hint="이름·경로로 찾기"):
+    def __init__(self, master, on_change, hint="이름·경로로 찾기", title="검색"):
         super().__init__(master)
         self.var = tk.StringVar()
-        ttk.Label(self, text="🔍").pack(side="left", padx=(0, 2))
-        self.entry = ttk.Entry(self, textvariable=self.var)
+        top = ttk.Frame(self)                              # 무엇을 찾는 칸인지 이름을 보여 줌
+        top.pack(fill="x")
+        lbl = ttk.Label(top, text="🔍 " + title, cursor="xterm")
+        lbl.pack(side="left")
+        self.count = ttk.Label(top, foreground="#666")
+        self.count.pack(side="right")
+        row = ttk.Frame(self)
+        row.pack(fill="x", pady=(1, 0))
+        self.entry = ttk.Entry(row, textvariable=self.var)
         self.entry.pack(side="left", fill="x", expand=True)
-        self.count = ttk.Label(self, foreground="#666")
-        self.count.pack(side="left", padx=(4, 0))
-        self.clear_btn = ttk.Button(self, text="✕", width=2, command=self.clear)
+        lbl.bind("<Button-1>", lambda e: self.entry.focus_set())
+        self.clear_btn = ttk.Button(row, text="✕", width=2, command=self.clear)
         self.clear_btn.pack(side="left", padx=(2, 0))
         Tooltip(self.entry, hint + " (여러 낱말은 띄어 쓰면 모두 들어간 것만, Esc 지우기)")
         Tooltip(self.clear_btn, "검색 지우기")
@@ -616,7 +622,7 @@ class TreePanel(ttk.Frame):
     """data: 노드 리스트. 노드 = {"type":"folder","name","open","children"} 또는 항목
     on_add(): 새 항목 dict 반환(없으면 None) / on_activate(node): 더블클릭 / label(node): 표시 글자"""
 
-    def __init__(self, master, data, on_add, on_activate, label, on_change, add_text):
+    def __init__(self, master, data, on_add, on_activate, label, on_change, add_text, search_title="검색"):
         super().__init__(master)
         self.data, self.on_add, self.on_activate = data, on_add, on_activate
         self.label, self.on_change = label, on_change
@@ -636,7 +642,7 @@ class TreePanel(ttk.Frame):
         self.scope_lbl.pack(side="left", fill="x", expand=True)
         ttk.Checkbutton(self.scope_bar, text="모든 파일", variable=self.scope_all,
                         command=lambda: self.refresh()).pack(side="right")
-        self.filter = FilterBox(self, lambda: self.refresh())
+        self.filter = FilterBox(self, lambda: self.refresh(), title=search_title)
         self.filter.pack(fill="x", pady=(0, 3))
         self.tv = ttk.Treeview(self, show="tree", selectmode="extended", columns=("x",))
         self.tv.column("#0", stretch=True, width=180)
@@ -2094,7 +2100,7 @@ class RecentPanel(ttk.Frame):
         self.info = ttk.Label(bar, foreground="#666")
         self.info.pack(side="left")
         ttk.Button(bar, text="모두 지우기", command=app.clear_recent).pack(side="right")
-        self.filter = FilterBox(self, lambda: self.refresh(), "파일 이름·경로로 찾기")
+        self.filter = FilterBox(self, lambda: self.refresh(), "파일 이름·경로로 찾기", "최근파일 검색")
         self.filter.pack(fill="x", pady=(0, 3))
         self.tv = ttk.Treeview(self, columns=("page", "time"), show="tree headings", selectmode="browse")
         self.tv.heading("#0", text="파일")
@@ -3116,18 +3122,18 @@ class App:
         self.side_box = ttk.Frame(self.pw)
         self.side = ttk.Notebook(self.side_box, width=AD_W)
         self.fav_panel = TreePanel(self.side, self.conf["favorites"], self.new_favorite, self.open_favorite,
-                                   lambda n: "📄 " + n.get("name", ""), self.persist, "＋ 현재 파일")
+                                   lambda n: "📄 " + n.get("name", ""), self.persist, "＋ 현재 파일", "즐겨찾기 검색")
         self.bm_panel = TreePanel(self.side, self.conf["bookmarks"], self.new_bookmark, self.open_bookmark,
-                                  lambda n: f"🔖 {n.get('name', '')}", self.persist, "＋ 북마크 추가")
+                                  lambda n: f"🔖 {n.get('name', '')}", self.persist, "＋ 북마크 추가", "북마크 검색")
         self.fav_panel.app = self.bm_panel.app = self
         self.bm_panel.scope = lambda: self.path if self.doc else None    # 북마크는 지금 파일 것만 보임
         self.bm_panel.refresh()
         self.side.add(self.fav_panel, text="즐겨찾기")
         self.side.add(self.bm_panel, text="북마크")
         self.recent_panel = RecentPanel(self.side, self)
-        self.side.add(self.recent_panel, text="최근")
         self.search_panel = SearchPanel(self.side, self)
         self.side.add(self.search_panel, text="검색")
+        self.side.add(self.recent_panel, text="최근")        # 맨 오른쪽
         # 사이드바 하단 광고창: 광고가 있으면 250×250, 없으면 최소화
         self.ad_frame = tk.Frame(self.side_box, width=AD_W, height=AD_H, bg="#f3f3f3",
                                  highlightthickness=1, highlightbackground="#d6d6d6")
@@ -3220,7 +3226,7 @@ class App:
         r.bind("<Control-w>", lambda e: self.close_tab(self.tab))
         r.bind("<Control-Tab>", lambda e: self.next_tab(1))
         r.bind("<Control-Shift-Tab>", lambda e: self.next_tab(-1))
-        r.bind("<Control-F>", lambda e: self.focus_search("folder"))
+        r.bind("<Control-F>", lambda e: (self.focus_search("folder"), "break")[1])
         r.bind("<Control-h>", lambda e: self.find_replace())
         r.bind("<F3>", lambda e: self.search_panel.step(1))
         r.bind("<Shift-F3>", lambda e: self.search_panel.step(-1))
@@ -3232,7 +3238,7 @@ class App:
         r.bind("<Control-S>", lambda e: self.save_as())            # Ctrl+Shift+S
         r.bind("<Control-p>", lambda e: self.print_doc())
         r.bind("<Control-z>", lambda e: self.do_undo())
-        r.bind("<Control-f>", lambda e: self.focus_search("file"))
+        r.bind("<Control-f>", lambda e: (self.focus_search("file"), "break")[1])   # 지금 PDF 파일에서 찾기
         def nav(f):   # 글자 입력칸에서는 Home/End/PgUp/PgDn을 쪽 이동에 쓰지 않음
             return lambda e: None if isinstance(e.widget, (tk.Entry, ttk.Entry, tk.Text, tk.Spinbox)) else f()
         r.bind("<Prior>", nav(lambda: self.go(-1)))
