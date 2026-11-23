@@ -18,7 +18,7 @@
  - 최근 파일, 마지막으로 본 페이지 기억
  - 설정 내보내기 / 가져오기 (JSON)
  - 페이지 회전(쪽별·여러 쪽), 원하는 쪽만 골라 새 PDF로 저장
- - 색칠(형광펜), 감추기(내용 삭제 후 검정/흰색 칠), 메모, 주석 지우기
+ - 색칠(형광펜), 감추기(내용 삭제 후 검정/회색/흰색 칠), 메모, 주석 지우기
  - 연속 스크롤 보기, 여러 쪽 나란히 보기(2~4쪽), 가로맞춤/세로맞춤
  - 여러 파일을 탭으로 (프로그램은 하나만 실행, 다시 열면 새 탭) / 새 창으로 열기
  - 도형 그리기 (사각형·원·선·화살표)
@@ -250,7 +250,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.18"
+APP_VER = "1.0.19"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -400,7 +400,7 @@ HELP_SECTIONS = [
         "글자를 클릭하거나 영역을 끌어서 칠합니다.",
         "색: 빠른 색 4가지 · [색상표 ▾] 24가지 · '다른 색 직접 고르기'",
         ("소", "감추기 — 개인정보 가리기"),
-        "영역을 끌면 아래 글자·그림을 실제로 지우고 검정(또는 흰색)으로 덮습니다. 복사·검색해도 안 나옵니다.",
+        "영역을 끌면 아래 글자·그림을 실제로 지우고 검정·회색·흰색 중 고른 색으로 덮습니다. 복사·검색해도 안 나옵니다.",
         ("소", "도형"),
         "사각형 · 원(항상 정원) · 타원 · 삼각형 · 선 · 화살표 — 끌어서 그리기 (Shift: 정사각형·45° 선)",
         "선 색 · 두께 · 채우기(없음/반투명/채움)는 도구줄 옆과 [도구 → 도형]에서 고릅니다.",
@@ -484,6 +484,7 @@ BOX_SHAPES = ("사각형", "원", "타원", "삼각형")      # 영역을 끌어
 TOOLS = [("edit", "✎ 글자수정"), ("mark", "🖍 색칠"), ("hide", "■ 감추기"), ("shape", "◻ 도형"),
          ("memo", "💬 메모"), ("erase", "⌫ 지우개"), ("capture", "✂ 캡쳐")]
 TOOL_LABEL = dict(TOOLS)
+HIDE_FILLS = {"검정": (0, 0, 0), "회색": (0.6, 0.6, 0.6), "흰색": (1, 1, 1)}      # 감추기로 덮는 색
 LIMIT_DEFAULTS = {"fav_max": 100, "bm_max": 200, "recent_max": 200}
 MEMO_FILL = (1, 0.97, 0.77)        # 본문 메모 상자 바탕 (연한 노랑)
 MEMO_TEXT = (0.24, 0.16, 0.0)      # 본문 메모 글자 (진한 갈색)
@@ -2852,7 +2853,7 @@ class App:
         cm.add_command(label="다른 색...", command=self.pick_color)
         tm.add_cascade(label="색칠 색", menu=cm)
         hm = tk.Menu(tm, tearoff=0)
-        for v in ("검정", "흰색"):
+        for v in HIDE_FILLS:
             hm.add_radiobutton(label=v, value=v, variable=self.hide_fill)
         tm.add_cascade(label="감추기 색", menu=hm)
         sm_ = tk.Menu(tm, tearoff=0)
@@ -5949,7 +5950,7 @@ class App:
                 if mode == "mark":
                     self._mark(page, fitz.Rect(rect))
                 else:
-                    fill = (0, 0, 0) if self.hide_fill.get() == "검정" else (1, 1, 1)
+                    fill = HIDE_FILLS.get(self.hide_fill.get(), (0, 0, 0))
                     page.add_redact_annot(fitz.Rect(rect), fill=fill)
                     try:
                         page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS)
