@@ -250,7 +250,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.20"
+APP_VER = "1.0.21"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -6562,12 +6562,14 @@ class App:
         frm = ttk.Frame(dlg, padding=12)
         frm.pack()
         fmt = tk.StringVar(value="docx")
-        for t, v in (("워드 (.docx)  글·표·그림", "docx"), ("엑셀 (.xlsx)  표와 글 — 쪽마다 시트 1개", "xlsx"),
-                     ("한글 (.hwpx)  글·표 (그림은 넣지 않음)", "hwpx")):
+        for t, v in (("워드 (.docx)  글·표·그림", "docx"), ("엑셀 (.xlsx)  표와 글 (시트 1개에 차례로)", "xlsx"),
+                     ("한글 (.hwpx)  글·표·그림", "hwpx")):
             ttk.Radiobutton(frm, text=t, value=v, variable=fmt).pack(anchor="w")
         ttk.Label(frm, text=f"쪽 범위 (전체 {len(self.doc)}쪽)").pack(anchor="w", pady=(8, 0))
         rv = tk.StringVar(value=f"1-{len(self.doc)}")
         ttk.Entry(frm, textvariable=rv, width=30).pack(anchor="w")
+        split = tk.BooleanVar(value=False)
+        ttk.Checkbutton(frm, text="엑셀: 쪽마다 시트 나누기 (끄면 시트 1개)", variable=split).pack(anchor="w", pady=(6, 0))
         ocr = tk.BooleanVar(value=True)
         ttk.Checkbutton(frm, text="스캔본(글자가 없는 쪽)은 글자 인식해서 변환", variable=ocr).pack(anchor="w", pady=(8, 0))
         ttk.Label(frm, text="※ PDF는 원래 글줄 배치만 저장된 형식이라 복잡한 편집 서식은\n   똑같이 재현되지 않을 수 있습니다. 변환 후 확인해주세요.",
@@ -6598,6 +6600,7 @@ class App:
             return
         data = self.doc.tobytes()
         use_ocr = ocr.get()
+        split_sh = split.get()
         title = os.path.splitext(os.path.basename(self.path))[0]
 
         def done(res, err):
@@ -6611,7 +6614,7 @@ class App:
                 if notes:
                     txt += "\n\n" + "\n".join(notes[:6]) + ("\n..." if len(notes) > 6 else "")
                 self._after_make(out, txt)
-        self._run_job("내보내는 중", lambda pr: pdfconv.convert(data, out, f, pages, use_ocr, pr, title), done)
+        self._run_job("내보내는 중", lambda pr: pdfconv.convert(data, out, f, pages, use_ocr, pr, title, split_sh), done)
 
     def ocr_dialog(self):
         if not self.doc:

@@ -653,31 +653,36 @@ def _cell(ref, text, style):
     return f'<c r="{ref}" s="{style}" t="inlineStr"><is><t xml:space="preserve">{_x(text)}</t></is></c>'
 
 
-def save_xlsx(pages, dst):
+def save_xlsx(pages, dst, split=False):
+    """split=False: 모든 쪽을 시트 1개에 차례로 / True: 쪽마다 시트 1개"""
     sheets = []
-    for pg in pages:
+    groups = [[pg] for pg in pages] if split else [pages]
+    for grp in groups:
         rows_xml, r, widths = [], 1, {}
-        for bk in pg["blocks"]:
-            if bk["t"] == "p":
-                st = 2 if bk["bold"] else 0
-                rows_xml.append(f'<row r="{r}">{_cell("A%d" % r, bk["text"], st)}</row>')
-                r += 1
-            elif bk["t"] == "tbl":
-                for row in bk["rows"]:
-                    cells = []
-                    for c, t in enumerate(row):
-                        cells.append(_cell(f"{_col_letter(c)}{r}", t, 1))
-                        widths[c] = max(widths.get(c, 6), min(60, sum(2 if ord(ch) > 0x2FF else 1 for ch in t) + 2))
-                    rows_xml.append(f'<row r="{r}">{"".join(cells)}</row>')
-                    r += 1
-                r += 1
+        for pg in grp:
+          if rows_xml and not split:
+            r += 1                                     # 쪽 사이 빈 줄
+          for bk in pg["blocks"]:
+              if bk["t"] == "p":
+                  st = 2 if bk["bold"] else 0
+                  rows_xml.append(f'<row r="{r}">{_cell("A%d" % r, bk["text"], st)}</row>')
+                  r += 1
+              elif bk["t"] == "tbl":
+                  for row in bk["rows"]:
+                      cells = []
+                      for c, t in enumerate(row):
+                          cells.append(_cell(f"{_col_letter(c)}{r}", t, 1))
+                          widths[c] = max(widths.get(c, 6), min(60, sum(2 if ord(ch) > 0x2FF else 1 for ch in t) + 2))
+                      rows_xml.append(f'<row r="{r}">{"".join(cells)}</row>')
+                      r += 1
+                  r += 1
         if not rows_xml:
             rows_xml.append('<row r="1"><c r="A1" t="inlineStr"><is><t>(이 쪽에는 가져올 글자나 표가 없습니다)</t></is></c></row>')
         cols = "".join(f'<col min="{c + 1}" max="{c + 1}" width="{w}" customWidth="1"/>' for c, w in sorted(widths.items()))
         sheets.append(('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
                        + (f"<cols>{cols}</cols>" if cols else "") +
-                       f'<sheetData>{"".join(rows_xml)}</sheetData></worksheet>', f'{pg["no"]}쪽'))
+                       f'<sheetData>{"".join(rows_xml)}</sheetData></worksheet>', f'{grp[0]["no"]}쪽' if split else "변환결과"))
     wb = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
           'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>']
     wr = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">']
@@ -796,7 +801,28 @@ _SECPR = ('<hp:secPr id="" textDirection="HORIZONTAL" spaceColumns="1134" tabSto
           '<hp:offset left="1417" right="1417" top="1417" bottom="1417"/></hp:pageBorderFill></hp:secPr>')
 
 
+def _hwpx_pic(bid, n, w, h):
+    """w,h: HWPUNIT"""
+    iid = 1700000000 + n
+    return (f'<hp:run charPrIDRef="0"><hp:pic id="{iid}" zOrder="{n}" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" '
+            f'textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="{iid}" reverse="0">'
+            f'<hp:offset x="0" y="0"/><hp:orgSz width="{w}" height="{h}"/><hp:curSz width="{w}" height="{h}"/>'
+            '<hp:flip horizontal="0" vertical="0"/>'
+            f'<hp:rotationInfo angle="0" centerX="{w // 2}" centerY="{h // 2}" rotateimage="1"/>'
+            '<hp:renderingInfo><hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+            '<hc:scaMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/><hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/></hp:renderingInfo>'
+            f'<hc:img binaryItemIDRef="{bid}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/>'
+            f'<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="{w}" y="0"/><hc:pt2 x="{w}" y="{h}"/><hc:pt3 x="0" y="{h}"/></hp:imgRect>'
+            f'<hp:imgClip left="0" right="{w}" top="0" bottom="{h}"/><hp:inMargin left="0" right="0" top="0" bottom="0"/>'
+            f'<hp:imgDim dimwidth="{w}" dimheight="{h}"/><hp:effects/>'
+            f'<hp:sz width="{w}" widthRelTo="ABSOLUTE" height="{h}" heightRelTo="ABSOLUTE" protect="0"/>'
+            '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" '
+            'horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+            '<hp:outMargin left="0" right="0" top="0" bottom="0"/></hp:pic></hp:run>')
+
+
 def save_hwpx(pages, dst, title=""):
+    media = []                                # (id, 파일명, 바이트, ext)
     charprs = [(1000, False)]                 # (높이 1/100pt, 굵게)
     cp_idx = {(1000, False): 0}
 
@@ -826,6 +852,17 @@ def save_hwpx(pages, dst, title=""):
         for bk in pg["blocks"]:
             if bk["t"] == "p":
                 para(f'<hp:run charPrIDRef="{cp(bk["size"], bk["bold"])}"><hp:t>{_x(bk["text"])}</hp:t></hp:run>', pb and not wrote)
+                wrote = True
+            elif bk["t"] == "img":
+                n = len(media) + 1
+                bid = f"image{n}"
+                w, h = bk["w"] * 100.0, bk["h"] * 100.0
+                if w > _TEXT_W:
+                    h, w = h * _TEXT_W / w, float(_TEXT_W)
+                if h > 70000:
+                    w, h = w * 70000 / h, 70000.0
+                media.append((bid, f"{bid}.{bk['ext']}", bk["data"], bk["ext"]))
+                para(_hwpx_pic(bid, n, max(100, int(w)), max(100, int(h))), pb and not wrote)
                 wrote = True
             elif bk["t"] == "tbl":
                 rows = bk["rows"]
@@ -869,7 +906,9 @@ def save_hwpx(pages, dst, title=""):
            f'<opf:metadata><opf:title>{_x(title)}</opf:title><opf:language>ko</opf:language></opf:metadata>'
            '<opf:manifest><opf:item id="header" href="Contents/header.xml" media-type="application/xml"/>'
            '<opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/>'
-           '<opf:item id="settings" href="settings.xml" media-type="application/xml"/></opf:manifest>'
+           '<opf:item id="settings" href="settings.xml" media-type="application/xml"/>'
+           + "".join(f'<opf:item id="{i}" href="BinData/{fn}" media-type="image/{"jpg" if e == "jpg" else "png"}" isEmbeded="1"/>'
+                     for i, fn, _d, e in media) + '</opf:manifest>'
            '<opf:spine><opf:itemref idref="header" linear="yes"/><opf:itemref idref="section0" linear="yes"/></opf:spine></opf:package>')
     container = ('<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container" '
                  'xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf"><ocf:rootfiles>'
@@ -887,18 +926,20 @@ def save_hwpx(pages, dst, title=""):
                            ("META-INF/manifest.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><odf:manifest xmlns:odf="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>'),
                            ("Contents/content.hpf", hpf), ("Contents/header.xml", header), ("Contents/section0.xml", section)):
             z.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED)
+        for _i, fn, data, _e in media:
+            z.writestr("BinData/" + fn, data, compress_type=zipfile.ZIP_STORED)
         z.writestr("Preview/PrvText.txt", "\n".join(b["text"] for p in pages for b in p["blocks"] if b["t"] == "p")[:1000],
                    compress_type=zipfile.ZIP_DEFLATED)
 
 
 # ──────────────────────────────────────────────────────────────
-def convert(src_bytes, dst, fmt, pages=None, use_ocr=True, progress=None, title=""):
+def convert(src_bytes, dst, fmt, pages=None, use_ocr=True, progress=None, title="", split_sheets=False):
     """fmt: 'docx' | 'xlsx' | 'hwpx'. (변환한 쪽 수, 알림 목록) 반환"""
     pg, notes = extract_pages(src_bytes, pages, use_ocr=use_ocr, want_images=(fmt != "xlsx"), progress=progress)
     if fmt == "docx":
         save_docx(pg, dst)
     elif fmt == "xlsx":
-        save_xlsx(pg, dst)
+        save_xlsx(pg, dst, split_sheets)
     elif fmt == "hwpx":
         save_hwpx(pg, dst, title)
     else:
