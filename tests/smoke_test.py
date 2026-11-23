@@ -835,6 +835,32 @@ app.send_stats()
 pump(0.5)
 check(not stats_sent, "보내지 않기 설정")
 
+step("PDF 용량 줄이기 · 워드/엑셀/한글 변환")
+import zipfile
+import pdfconv
+_pc = os.path.join(TMP, "변환용.pdf")
+_d = fitz.open(); _p = _d.new_page()
+_p.insert_text((60, 70), "Report title", fontsize=18)
+_p.insert_text((60, 100), "Body text line for conversion", fontsize=11)
+for _r in range(3):
+    for _c in range(3):
+        _rc = fitz.Rect(60 + _c * 100, 140 + _r * 24, 160 + _c * 100, 164 + _r * 24)
+        _p.draw_rect(_rc, width=0.8)
+        _p.insert_text((_rc.x0 + 4, _rc.y1 - 7), str(_r * 3 + _c + 1000), fontsize=10)
+_d.save(_pc); _d.close()
+_src = open(_pc, "rb").read()
+_b, _a = pdfconv.shrink_pdf(_src, os.path.join(TMP, "줄임.pdf"), list(pdfconv.SHRINK_LEVELS)[1])
+check(_b > 0 and os.path.exists(os.path.join(TMP, "줄임.pdf")), "용량 줄이기 저장")
+for _fmt in ("docx", "xlsx", "hwpx"):
+    _o = os.path.join(TMP, "변환." + _fmt)
+    _n, _nt, _ = pdfconv.convert(_src, _o, _fmt, use_ocr=False)
+    check(_n == 1 and zipfile.is_zipfile(_o), f"{_fmt} 변환")
+    if _fmt == "hwpx":
+        _z = zipfile.ZipFile(_o)
+        check(_z.read("mimetype") == b"application/hwp+zip", "hwpx mimetype")
+        check("Report title" in _z.read("Contents/section0.xml").decode("utf-8"), "hwpx 본문 글자")
+    check(_nt == 1, f"{_fmt} 표 1개 인식")
+
 step("종료")
 for t in app.tabs:
     t._dirty = False

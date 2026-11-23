@@ -250,7 +250,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.19"
+APP_VER = "1.0.20"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -467,7 +467,8 @@ HELP_SECTIONS = [
         ("키", "Esc", "글자 수정 도구로 · 창 닫기"),
     ]),
     ("알아두기", "pdf", [
-        "스캔한(그림으로 된) PDF는 글자 정보가 없어 글자 수정·찾기가 되지 않습니다.",
+        "스캔한(그림으로 된) PDF는 글자 정보가 없어 글자 수정·찾기가 되지 않습니다 → [파일 → 스캔본 글자 인식]으로 검색되는 PDF로 바꿀 수 있습니다.",
+        "[파일 → PDF 용량 줄이기]로 사진·스캔 PDF 용량을 줄이고, [파일 → 워드·엑셀·한글 문서로 내보내기]로 글·표를 문서로 옮길 수 있습니다.",
         "수정한 글자는 맑은 고딕으로 다시 써집니다(원래 글꼴과 모양이 조금 다를 수 있음).",
         "감추기로 지운 내용은 저장하면 되살릴 수 없습니다. 원본은 따로 남겨 두세요.",
         "메모의 주황 점·점선은 이 프로그램에서만 보입니다(다른 뷰어에서는 노란 메모 상자만).",
@@ -2795,6 +2796,10 @@ class App:
         fm.add_command(label="인쇄...", accelerator="Ctrl+P", command=self.print_doc,
                        image=self.menu_icon("print"), compound="left")
         fm.add_command(label="원하는 쪽만 저장...", accelerator="Ctrl+E", command=self.extract_dialog)
+        fm.add_separator()
+        fm.add_command(label="PDF 용량 줄이기...", command=self.shrink_dialog)
+        fm.add_command(label="워드·엑셀·한글 문서로 내보내기...", command=self.export_dialog)
+        fm.add_command(label="스캔본 글자 인식 (검색되는 PDF로)...", command=self.ocr_dialog)
         fm.add_separator()
         fm.add_command(label="탭 닫기", accelerator="Ctrl+W", command=lambda: self.close_tab(self.tab))
         fm.add_command(label="종료", command=self.on_close)
@@ -6407,6 +6412,238 @@ class App:
             self.status.set(f"{len(pages)}쪽을 저장했습니다: {p}")
         except Exception as ex:
             messagebox.showerror(APP, f"저장 실패:\n{ex}")
+
+    # ---------- 용량 줄이기 / 다른 형식으로 내보내기 / 글자 인식 ----------
+    def _run_job(self, title, work, done):
+        """오래 걸리는 일을 따로 돌리고 진행 창을 보여줌. work(progress) -> 결과, done(결과, 오류)"""
+        import queue
+        import pdfconv
+        q = queue.Queue()
+        cancel = {"v": False}
+        dlg = Popup(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack()
+        msg = tk.StringVar(value="준비 중...")
+        ttk.Label(frm, textvariable=msg, width=44).pack(anchor="w")
+        bar = ttk.Progressbar(frm, length=320, mode="determinate", maximum=100)
+        bar.pack(pady=8)
+
+        def stop():
+            cancel["v"] = True
+            msg.set("취소하는 중...")
+        ttk.Button(frm, text="취소", command=stop).pack(anchor="e")
+        dlg.protocol("WM_DELETE_WINDOW", stop)
+
+        def progress(cur, total, text=""):
+            if cancel["v"]:
+                raise pdfconv.Cancelled()
+            q.put(("p", cur, total, text))
+
+        def run():
+            try:
+                q.put(("d", work(progress), None))
+            except pdfconv.Cancelled:
+                q.put(("d", None, "cancel"))
+            except Exception as ex:
+                q.put(("d", None, ex))
+        threading.Thread(target=run, daemon=True).start()
+
+        def poll():
+            fin = None
+            try:
+                while True:
+                    m = q.get_nowait()
+                    if m[0] == "p":
+                        msg.set(m[3] or msg.get())
+                        bar["value"] = 100.0 * m[1] / max(1, m[2])
+                    else:
+                        fin = m
+            except queue.Empty:
+                pass
+            if fin:
+                try:
+                    dlg.destroy()
+                except tk.TclError:
+                    pass
+                done(fin[1], fin[2])
+            elif dlg.winfo_exists():
+                dlg.after(120, poll)
+        dlg.after(120, poll)
+        dlg.grab_set()
+
+    def _ask_out(self, suffix, ext, label):
+        base = os.path.splitext(os.path.basename(self.path))[0]
+        p = filedialog.asksaveasfilename(defaultextension=ext, filetypes=[(label, "*" + ext)],
+                                         initialdir=os.path.dirname(self.path), initialfile=f"{base}{suffix}{ext}")
+        if not p:
+            return None
+        if os.path.abspath(p) == os.path.abspath(self.path):
+            messagebox.showwarning(APP, "지금 열려 있는 파일과 다른 이름으로 저장해주세요.")
+            return None
+        return p
+
+    def _after_make(self, p, text, openable=False):
+        self.status.set(f"{text}: {p}")
+        if openable:
+            if messagebox.askyesno(APP, f"{text}\n\n{p}\n\n새 탭으로 열어볼까요?"):
+                self.open_file(p)
+        else:
+            messagebox.showinfo(APP, f"{text}\n\n{p}")
+
+    def shrink_dialog(self):
+        if not self.doc:
+            return
+        import pdfconv
+        dlg = Popup(self.root)
+        dlg.title("PDF 용량 줄이기")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack()
+        try:
+            cur = os.path.getsize(self.path)
+            ttk.Label(frm, text=f"현재 파일 크기: {cur / 1048576:.1f} MB").pack(anchor="w")
+        except OSError:
+            pass
+        ttk.Label(frm, text="사진·스캔 그림의 해상도를 낮춰서 용량을 줄입니다.\n(글자는 그대로 유지됩니다. 원본은 그대로 두고 새 파일로 저장)",
+                  foreground="#555").pack(anchor="w", pady=(2, 8))
+        lv = tk.StringVar(value=list(pdfconv.SHRINK_LEVELS)[1])
+        for k in pdfconv.SHRINK_LEVELS:
+            ttk.Radiobutton(frm, text=k, value=k, variable=lv).pack(anchor="w")
+        go = {"v": False}
+
+        def ok(_=None):
+            go["v"] = True
+            dlg.destroy()
+        b = ttk.Frame(frm)
+        b.pack(fill="x", pady=(10, 0))
+        ttk.Button(b, text="취소", command=dlg.destroy).pack(side="right")
+        ttk.Button(b, text="줄이기", command=ok).pack(side="right", padx=4)
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.grab_set()
+        dlg.wait_window()
+        if not go["v"]:
+            return
+        out = self._ask_out("_용량줄임", ".pdf", "PDF")
+        if not out:
+            return
+        data = self.doc.tobytes()
+        level = lv.get()
+
+        def done(res, err):
+            if err == "cancel":
+                self.status.set("취소했습니다.")
+            elif err:
+                messagebox.showerror(APP, f"용량 줄이기 실패:\n{err}")
+            else:
+                before, after = res
+                pct = 100.0 * (before - after) / before if before else 0
+                if after >= before:
+                    try:
+                        os.remove(out)
+                    except OSError:
+                        pass
+                    messagebox.showinfo(APP, "더 줄일 수 있는 그림이 없어서 용량이 줄지 않았습니다.\n(다른 단계로 다시 해보세요.)")
+                    return
+                self._after_make(out, f"{before / 1048576:.1f}MB → {after / 1048576:.1f}MB ({pct:.0f}% 줄임)", openable=True)
+        self._run_job("PDF 용량 줄이기", lambda pr: pdfconv.shrink_pdf(data, out, level, pr), done)
+
+    def export_dialog(self):
+        if not self.doc:
+            return
+        import pdfconv
+        dlg = Popup(self.root)
+        dlg.title("워드·엑셀·한글로 내보내기")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack()
+        fmt = tk.StringVar(value="docx")
+        for t, v in (("워드 (.docx)  글·표·그림", "docx"), ("엑셀 (.xlsx)  표와 글 — 쪽마다 시트 1개", "xlsx"),
+                     ("한글 (.hwpx)  글·표 (그림은 넣지 않음)", "hwpx")):
+            ttk.Radiobutton(frm, text=t, value=v, variable=fmt).pack(anchor="w")
+        ttk.Label(frm, text=f"쪽 범위 (전체 {len(self.doc)}쪽)").pack(anchor="w", pady=(8, 0))
+        rv = tk.StringVar(value=f"1-{len(self.doc)}")
+        ttk.Entry(frm, textvariable=rv, width=30).pack(anchor="w")
+        ocr = tk.BooleanVar(value=True)
+        ttk.Checkbutton(frm, text="스캔본(글자가 없는 쪽)은 글자 인식해서 변환", variable=ocr).pack(anchor="w", pady=(8, 0))
+        ttk.Label(frm, text="※ PDF는 원래 글줄 배치만 저장된 형식이라 복잡한 편집 서식은\n   똑같이 재현되지 않을 수 있습니다. 변환 후 확인해주세요.",
+                  foreground="#666").pack(anchor="w", pady=(6, 0))
+        go = {"v": None}
+
+        def ok(_=None):
+            try:
+                go["v"] = parse_pages(rv.get(), len(self.doc))
+            except ValueError as ex:
+                messagebox.showwarning(APP, str(ex) if "쪽" in str(ex) else "쪽 번호를 확인해주세요.", parent=dlg)
+                return
+            dlg.destroy()
+        b = ttk.Frame(frm)
+        b.pack(fill="x", pady=(10, 0))
+        ttk.Button(b, text="취소", command=dlg.destroy).pack(side="right")
+        ttk.Button(b, text="내보내기", command=ok).pack(side="right", padx=4)
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.grab_set()
+        dlg.wait_window()
+        pages = go["v"]
+        if not pages:
+            return
+        f = fmt.get()
+        label = {"docx": "워드 문서", "xlsx": "엑셀 파일", "hwpx": "한글 문서"}[f]
+        out = self._ask_out("", "." + f, label)
+        if not out:
+            return
+        data = self.doc.tobytes()
+        use_ocr = ocr.get()
+        title = os.path.splitext(os.path.basename(self.path))[0]
+
+        def done(res, err):
+            if err == "cancel":
+                self.status.set("취소했습니다.")
+            elif err:
+                messagebox.showerror(APP, f"내보내기 실패:\n{err}")
+            else:
+                n, ntbl, notes = res
+                txt = f"{n}쪽을 {label}로 저장했습니다. (표 {ntbl}개)"
+                if notes:
+                    txt += "\n\n" + "\n".join(notes[:6]) + ("\n..." if len(notes) > 6 else "")
+                self._after_make(out, txt)
+        self._run_job("내보내는 중", lambda pr: pdfconv.convert(data, out, f, pages, use_ocr, pr, title), done)
+
+    def ocr_dialog(self):
+        if not self.doc:
+            return
+        import pdfconv
+        eng, desc, _aux = pdfconv.ocr_engine()
+        if not eng:
+            messagebox.showwarning(APP, desc)
+            return
+        scan = [i + 1 for i in range(len(self.doc)) if pdfconv.page_needs_ocr(self.doc[i])]
+        if not scan:
+            messagebox.showinfo(APP, "글자 인식이 필요한 쪽(글자 없이 그림만 있는 쪽)이 없습니다.\n이미 검색되는 PDF 입니다.")
+            return
+        show = ", ".join(map(str, scan[:15])) + (" ..." if len(scan) > 15 else "")
+        if not messagebox.askyesno(APP, f"스캔본으로 보이는 {len(scan)}쪽({show})을 글자 인식해서\n"
+                                   f"검색·복사가 되는 PDF 로 저장합니다.\n\n사용 엔진: {desc}\n"
+                                   f"쪽당 몇 초 걸립니다. 계속할까요?"):
+            return
+        out = self._ask_out("_검색가능", ".pdf", "PDF")
+        if not out:
+            return
+        data = self.doc.tobytes()
+
+        def done(res, err):
+            if err == "cancel":
+                self.status.set("취소했습니다.")
+            elif err:
+                messagebox.showerror(APP, f"글자 인식 실패:\n{err}")
+            else:
+                self._after_make(out, f"{res[0]}쪽을 글자 인식했습니다 (단어 {res[1]}개). 글자 인식은 100% 정확하지 않으니 중요한 글자는 확인해주세요.",
+                                 openable=True)
+        self._run_job("글자 인식 중", lambda pr: pdfconv.make_searchable(data, out, 300, pr), done)
 
     def find_replace(self):
         if not self.doc:
