@@ -250,7 +250,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.22"
+APP_VER = "1.0.23"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -2799,6 +2799,7 @@ class App:
         fm.add_separator()
         fm.add_command(label="PDF 용량 줄이기...", command=self.shrink_dialog)
         fm.add_command(label="워드·엑셀·한글 문서로 내보내기...", command=self.export_dialog)
+        fm.add_command(label="그림 파일로 변환 (PNG·JPG)...", command=self.images_dialog)
         fm.add_command(label="스캔본 글자 인식 (검색되는 PDF로)...", command=self.ocr_dialog)
         fm.add_separator()
         fm.add_command(label="탭 닫기", accelerator="Ctrl+W", command=lambda: self.close_tab(self.tab))
@@ -3013,6 +3014,14 @@ class App:
             Tooltip(rb, tips[k])
             self.tool_rbs[k] = rb
             self.labeled.append(rb)
+        # 캡쳐 옆 바로가기: 용량 줄이기 · 문서(워드·엑셀·한글) 변환 · 그림 변환
+        ttk.Separator(self.toolbtns, orient="vertical").pack(side="left", fill="y", padx=4)
+        for txt, cmd, tip in (("📉 용량줄이기", self.shrink_dialog, "PDF 용량 줄이기 — 사진·스캔 그림을 줄여 새 파일로 저장"),
+                              ("📄 문서변환", self.export_dialog, "워드·엑셀·한글 문서로 내보내기"),
+                              ("🖼 그림변환", self.images_dialog, "쪽을 그림 파일(PNG·JPG)로 저장")):
+            qb = ttk.Button(self.toolbtns, text=txt, style="Toolbutton", command=cmd)
+            qb.pack(side="left", padx=0)
+            Tooltip(qb, tip)
         self.optbox = ttk.Frame(self.toolarea)
         self.opt = {k: ttk.Frame(self.optbox) for k, _ in TOOLS}
 
@@ -6618,6 +6627,73 @@ class App:
                     txt += "\n\n" + "\n".join(notes[:6]) + ("\n..." if len(notes) > 6 else "")
                 self._after_make(out, txt)
         self._run_job("내보내는 중", lambda pr: pdfconv.convert(data, out, f, pages, use_ocr, pr, title, split_sh, gap_sh), done)
+
+    def images_dialog(self):
+        if not self.doc:
+            return
+        import pdfconv
+        dlg = Popup(self.root)
+        dlg.title("그림 파일로 변환")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack()
+        ttk.Label(frm, text=f"쪽 범위 (전체 {len(self.doc)}쪽)").pack(anchor="w")
+        rv = tk.StringVar(value=f"{self.page_no + 1}" if len(self.doc) > 1 else "1")
+        ent = ttk.Entry(frm, textvariable=rv, width=30)
+        ent.pack(anchor="w")
+        ttk.Label(frm, text=f"예) 3, 5-8   ·   전체는 1-{len(self.doc)}", foreground="#666").pack(anchor="w")
+        row = ttk.Frame(frm)
+        row.pack(anchor="w", pady=(8, 0))
+        fmt = tk.StringVar(value="png")
+        ttk.Radiobutton(row, text="PNG (선명, 용량 큼)", value="png", variable=fmt).pack(side="left")
+        ttk.Radiobutton(row, text="JPG (용량 작음)", value="jpg", variable=fmt).pack(side="left", padx=8)
+        row2 = ttk.Frame(frm)
+        row2.pack(anchor="w", pady=(6, 0))
+        ttk.Label(row2, text="해상도").pack(side="left")
+        dpi = tk.StringVar(value="200")
+        ttk.Combobox(row2, textvariable=dpi, values=("100", "150", "200", "300", "400"), width=5, state="readonly").pack(side="left", padx=4)
+        ttk.Label(row2, text="dpi (200 = 보통, 300 = 인쇄용)", foreground="#666").pack(side="left")
+        go = {"v": None}
+
+        def ok(_=None):
+            try:
+                go["v"] = parse_pages(rv.get(), len(self.doc))
+            except ValueError as ex:
+                messagebox.showwarning(APP, str(ex) if "쪽" in str(ex) else "쪽 번호를 확인해주세요.", parent=dlg)
+                return
+            dlg.destroy()
+        b = ttk.Frame(frm)
+        b.pack(fill="x", pady=(10, 0))
+        ttk.Button(b, text="취소", command=dlg.destroy).pack(side="right")
+        ttk.Button(b, text="저장할 폴더 고르기", command=ok).pack(side="right", padx=4)
+        ent.bind("<Return>", ok)
+        ent.focus_set()
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.grab_set()
+        dlg.wait_window()
+        pages = go["v"]
+        if not pages:
+            return
+        folder = filedialog.askdirectory(title="그림을 저장할 폴더", initialdir=os.path.dirname(self.path))
+        if not folder:
+            return
+        data = self.doc.tobytes()
+        base = os.path.splitext(os.path.basename(self.path))[0]
+        f, d = fmt.get(), int(dpi.get())
+
+        def done(res, err):
+            if err == "cancel":
+                self.status.set("취소했습니다.")
+            elif err:
+                messagebox.showerror(APP, f"그림 변환 실패:\n{err}")
+            else:
+                self.status.set(f"{len(res)}장을 그림으로 저장했습니다: {folder}")
+                try:
+                    os.startfile(folder)             # 저장한 폴더 열기 (윈도우)
+                except Exception:
+                    messagebox.showinfo(APP, f"{len(res)}장을 저장했습니다.\n\n{folder}")
+        self._run_job("그림으로 저장 중", lambda pr: pdfconv.render_pages(data, folder, base, pages, f, d, pr), done)
 
     def ocr_dialog(self):
         if not self.doc:

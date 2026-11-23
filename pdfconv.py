@@ -933,6 +933,30 @@ def save_hwpx(pages, dst, title=""):
 
 
 # ──────────────────────────────────────────────────────────────
+def render_pages(src_bytes, outdir, base, pages, fmt="png", dpi=200, progress=None):
+    """쪽을 그림 파일로 저장. 저장한 파일 경로 목록 반환 (이름: 기본이름_001.png)"""
+    doc = fitz.open("pdf", src_bytes)
+    outs = []
+    try:
+        if doc.needs_pass:
+            raise ValueError("암호가 걸린 PDF 입니다.")
+        idx = list(pages) if pages is not None else list(range(len(doc)))
+        width = max(3, len(str(len(doc))))
+        for n, i in enumerate(idx):
+            _tick(progress, n, len(idx), f"{i + 1}쪽 저장 중... ({n + 1}/{len(idx)})")
+            pix = doc[i].get_pixmap(dpi=dpi, alpha=False)
+            p = os.path.join(outdir, f"{base}_{i + 1:0{width}d}.{'jpg' if fmt == 'jpg' else 'png'}")
+            if fmt == "jpg":
+                pix.save(p, jpg_quality=92)
+            else:
+                pix.save(p)
+            outs.append(p)
+    finally:
+        doc.close()
+    _tick(progress, 1, 1, "완료")
+    return outs
+
+
 def convert(src_bytes, dst, fmt, pages=None, use_ocr=True, progress=None, title="", split_sheets=False, page_gap=True):
     """fmt: 'docx' | 'xlsx' | 'hwpx'. (변환한 쪽 수, 알림 목록) 반환"""
     pg, notes = extract_pages(src_bytes, pages, use_ocr=use_ocr, want_images=(fmt != "xlsx"), progress=progress)
