@@ -653,14 +653,14 @@ def _cell(ref, text, style):
     return f'<c r="{ref}" s="{style}" t="inlineStr"><is><t xml:space="preserve">{_x(text)}</t></is></c>'
 
 
-def save_xlsx(pages, dst, split=False):
+def save_xlsx(pages, dst, split=False, gap=True):
     """split=False: 모든 쪽을 시트 1개에 차례로 / True: 쪽마다 시트 1개"""
     sheets = []
     groups = [[pg] for pg in pages] if split else [pages]
     for grp in groups:
         rows_xml, r, widths = [], 1, {}
         for pg in grp:
-          if rows_xml and not split:
+          if rows_xml and not split and gap:
             r += 1                                     # 쪽 사이 빈 줄
           for bk in pg["blocks"]:
               if bk["t"] == "p":
@@ -933,13 +933,13 @@ def save_hwpx(pages, dst, title=""):
 
 
 # ──────────────────────────────────────────────────────────────
-def convert(src_bytes, dst, fmt, pages=None, use_ocr=True, progress=None, title="", split_sheets=False):
+def convert(src_bytes, dst, fmt, pages=None, use_ocr=True, progress=None, title="", split_sheets=False, page_gap=True):
     """fmt: 'docx' | 'xlsx' | 'hwpx'. (변환한 쪽 수, 알림 목록) 반환"""
     pg, notes = extract_pages(src_bytes, pages, use_ocr=use_ocr, want_images=(fmt != "xlsx"), progress=progress)
     if fmt == "docx":
         save_docx(pg, dst)
     elif fmt == "xlsx":
-        save_xlsx(pg, dst, split_sheets)
+        save_xlsx(pg, dst, split_sheets, page_gap)
     elif fmt == "hwpx":
         save_hwpx(pg, dst, title)
     else:
