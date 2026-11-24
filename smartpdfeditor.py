@@ -250,7 +250,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.23"
+APP_VER = "1.0.24"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -3014,12 +3014,13 @@ class App:
             Tooltip(rb, tips[k])
             self.tool_rbs[k] = rb
             self.labeled.append(rb)
-        # 캡쳐 옆 바로가기: 용량 줄이기 · 문서(워드·엑셀·한글) 변환 · 그림 변환
-        ttk.Separator(self.toolbtns, orient="vertical").pack(side="left", fill="y", padx=4)
+        # 도구 옵션(펼침메뉴 등)은 이 바로가기 왼쪽에 보임: 용량 줄이기 · 문서(워드·엑셀·한글) 변환 · 그림 변환
+        self.quick = ttk.Frame(self.toolarea)
+        ttk.Separator(self.quick, orient="vertical").pack(side="left", fill="y", padx=4)
         for txt, cmd, tip in (("📉 용량줄이기", self.shrink_dialog, "PDF 용량 줄이기 — 사진·스캔 그림을 줄여 새 파일로 저장"),
                               ("📄 문서변환", self.export_dialog, "워드·엑셀·한글 문서로 내보내기"),
                               ("🖼 그림변환", self.images_dialog, "쪽을 그림 파일(PNG·JPG)로 저장")):
-            qb = ttk.Button(self.toolbtns, text=txt, style="Toolbutton", command=cmd)
+            qb = ttk.Button(self.quick, text=txt, style="Toolbutton", command=cmd)
             qb.pack(side="left", padx=0)
             Tooltip(qb, tip)
         self.optbox = ttk.Frame(self.toolarea)
@@ -3042,6 +3043,11 @@ class App:
 
         self.swatch = color_opts(self.opt["mark"], self.mark_color, ("#ffe600", "#7cf27c", "#7fd3ff", "#ff9ecb"),
                                  self.set_color, "지금 색칠 색 (누르면 색상표)")
+        hf = self.opt["hide"]
+        ttk.Label(hf, text="덮는 색").pack(side="left", padx=(6, 2))
+        hc = ttk.Combobox(hf, textvariable=self.hide_fill, values=list(HIDE_FILLS), width=5, state="readonly")
+        hc.pack(side="left")
+        Tooltip(hc, "감추기로 덮는 색 고르기")
         f = self.opt["shape"]
         ttk.Combobox(f, textvariable=self.shape_kind, values=SHAPES, width=6, state="readonly").pack(side="left", padx=(4, 0))
         self.shape_swatch = color_opts(f, self.shape_color, ("#e53935", "#1e88e5", "#000000"),
@@ -3120,8 +3126,7 @@ class App:
                                   ("view", "m_view", "뷰어", "뷰어 모드: 보기 전용, 끌어서 글자 선택 (F4)")):
             rb = ttk.Radiobutton(right, text=txt, value=val, variable=self.app_mode, style="Toolbutton",
                                  compound="left", command=self.set_app_mode)
-            self.set_icon(rb, ic, "top")
-            self.labeled.append(rb)
+            self.set_icon(rb, ic, "top")             # 글자는 줄이지 않고 늘 보임
             rb.pack(side="right", padx=1)
             Tooltip(rb, tip)
         # 바로가기(바탕화면·작업표시줄) — 둘 다 만들어 두면 숨김
@@ -5284,7 +5289,7 @@ class App:
                 in_bar = False
             others = self.bar.winfo_reqwidth() - (self.toolarea.winfo_reqwidth() if in_bar else 0)
             widest_opt = max((f.winfo_reqwidth() for f in self.opt.values()), default=0)
-            return others + self.toolbtns.winfo_reqwidth() + widest_opt + 24, in_bar
+            return others + self.toolbtns.winfo_reqwidth() + self.quick.winfo_reqwidth() + widest_opt + 24, in_bar
 
         self.set_compact(False)
         n, in_bar = need()
@@ -5314,6 +5319,8 @@ class App:
         self.cv.delete("hl")
         if self.toolbtns.winfo_manager() == "":
             self.toolbtns.pack(side="left")      # 도구 버튼은 뷰어·편집 모드 모두 표시
+        if self.quick.winfo_manager() == "":
+            self.quick.pack(side="left")
         if m == "view":
             if self.mode.get() in TOOL_LABEL:
                 self._last_tool = self.mode.get()
@@ -5325,7 +5332,7 @@ class App:
             self.clear_selection()
             if self.mode.get() not in TOOL_LABEL:
                 self.mode.set(self._last_tool)
-            self.optbox.pack(side="left")
+            self.optbox.pack(side="left", before=self.quick)      # 펼침메뉴는 용량줄이기 왼쪽
             self.on_mode()
 
     def on_mode(self, quiet=False):
@@ -6483,6 +6490,31 @@ class App:
         dlg.after(120, poll)
         dlg.grab_set()
 
+    def _page_range_box(self, parent, all_default=True, text_default=None):
+        """쪽 범위: [전체 쪽] 체크 + 입력칸. 반환 (프레임, 쪽 목록을 돌려주는 함수 — 잘못되면 None)"""
+        n = len(self.doc)
+        all_v = tk.BooleanVar(value=all_default)
+        rv = tk.StringVar(value=text_default or str(self.page_no + 1))
+        box = ttk.Frame(parent)
+        ent = ttk.Entry(box, textvariable=rv, width=30)
+
+        def sync():
+            ent.configure(state="disabled" if all_v.get() else "normal")
+        ttk.Checkbutton(box, text=f"전체 쪽 (총 {n}쪽)", variable=all_v, command=sync).pack(anchor="w")
+        ent.pack(anchor="w", pady=(2, 0))
+        ttk.Label(box, text="전체를 끄고 쪽 번호 입력 — 예) 3, 5-8, 10-", foreground="#666").pack(anchor="w")
+        sync()
+
+        def get(parent_win=None):
+            if all_v.get():
+                return list(range(n))
+            try:
+                return parse_pages(rv.get(), n)
+            except ValueError as ex:
+                messagebox.showwarning(APP, str(ex) if "쪽" in str(ex) else "쪽 번호를 확인해주세요.", parent=parent_win)
+                return None
+        return box, get
+
     def _ask_out(self, suffix, ext, label):
         base = os.path.splitext(os.path.basename(self.path))[0]
         p = filedialog.asksaveasfilename(defaultextension=ext, filetypes=[(label, "*" + ext)],
@@ -6522,10 +6554,16 @@ class App:
         lv = tk.StringVar(value=list(pdfconv.SHRINK_LEVELS)[1])
         for k in pdfconv.SHRINK_LEVELS:
             ttk.Radiobutton(frm, text=k, value=k, variable=lv).pack(anchor="w")
-        go = {"v": False}
+        ttk.Label(frm, text="줄일 쪽 (선택한 쪽의 그림만 줄이고, 나머지 쪽은 그대로 둡니다)").pack(anchor="w", pady=(10, 0))
+        rbox, rget = self._page_range_box(frm, True)
+        rbox.pack(anchor="w")
+        go = {"v": False, "pages": None}
 
         def ok(_=None):
-            go["v"] = True
+            pg = rget(dlg)
+            if pg is None:
+                return
+            go["v"], go["pages"] = True, pg
             dlg.destroy()
         b = ttk.Frame(frm)
         b.pack(fill="x", pady=(10, 0))
@@ -6541,6 +6579,7 @@ class App:
             return
         data = self.doc.tobytes()
         level = lv.get()
+        sel_pages = go["pages"] if len(go["pages"]) < len(self.doc) else None
 
         def done(res, err):
             if err == "cancel":
@@ -6558,7 +6597,7 @@ class App:
                     messagebox.showinfo(APP, "더 줄일 수 있는 그림이 없어서 용량이 줄지 않았습니다.\n(다른 단계로 다시 해보세요.)")
                     return
                 self._after_make(out, f"{before / 1048576:.1f}MB → {after / 1048576:.1f}MB ({pct:.0f}% 줄임)", openable=True)
-        self._run_job("PDF 용량 줄이기", lambda pr: pdfconv.shrink_pdf(data, out, level, pr), done)
+        self._run_job("PDF 용량 줄이기", lambda pr: pdfconv.shrink_pdf(data, out, level, pr, sel_pages), done)
 
     def export_dialog(self):
         if not self.doc:
@@ -6574,9 +6613,9 @@ class App:
         for t, v in (("워드 (.docx)  글·표·그림", "docx"), ("엑셀 (.xlsx)  표와 글 (시트 1개에 차례로)", "xlsx"),
                      ("한글 (.hwpx)  글·표·그림", "hwpx")):
             ttk.Radiobutton(frm, text=t, value=v, variable=fmt).pack(anchor="w")
-        ttk.Label(frm, text=f"쪽 범위 (전체 {len(self.doc)}쪽)").pack(anchor="w", pady=(8, 0))
-        rv = tk.StringVar(value=f"1-{len(self.doc)}")
-        ttk.Entry(frm, textvariable=rv, width=30).pack(anchor="w")
+        ttk.Label(frm, text="내보낼 쪽").pack(anchor="w", pady=(8, 0))
+        rbox, rget = self._page_range_box(frm, True)
+        rbox.pack(anchor="w")
         split = tk.BooleanVar(value=False)
         ttk.Checkbutton(frm, text="엑셀: 쪽마다 시트 나누기 (끄면 시트 1개)", variable=split).pack(anchor="w", pady=(6, 0))
         gap = tk.BooleanVar(value=True)
@@ -6588,10 +6627,8 @@ class App:
         go = {"v": None}
 
         def ok(_=None):
-            try:
-                go["v"] = parse_pages(rv.get(), len(self.doc))
-            except ValueError as ex:
-                messagebox.showwarning(APP, str(ex) if "쪽" in str(ex) else "쪽 번호를 확인해주세요.", parent=dlg)
+            go["v"] = rget(dlg)
+            if go["v"] is None:
                 return
             dlg.destroy()
         b = ttk.Frame(frm)
@@ -6638,11 +6675,10 @@ class App:
         dlg.resizable(False, False)
         frm = ttk.Frame(dlg, padding=12)
         frm.pack()
-        ttk.Label(frm, text=f"쪽 범위 (전체 {len(self.doc)}쪽)").pack(anchor="w")
-        rv = tk.StringVar(value=f"{self.page_no + 1}" if len(self.doc) > 1 else "1")
-        ent = ttk.Entry(frm, textvariable=rv, width=30)
-        ent.pack(anchor="w")
-        ttk.Label(frm, text=f"예) 3, 5-8   ·   전체는 1-{len(self.doc)}", foreground="#666").pack(anchor="w")
+        ttk.Label(frm, text="저장할 쪽").pack(anchor="w")
+        rbox, rget = self._page_range_box(frm, False)
+        rbox.pack(anchor="w")
+        ent = rbox.winfo_children()[1]
         row = ttk.Frame(frm)
         row.pack(anchor="w", pady=(8, 0))
         fmt = tk.StringVar(value="png")
@@ -6657,10 +6693,8 @@ class App:
         go = {"v": None}
 
         def ok(_=None):
-            try:
-                go["v"] = parse_pages(rv.get(), len(self.doc))
-            except ValueError as ex:
-                messagebox.showwarning(APP, str(ex) if "쪽" in str(ex) else "쪽 번호를 확인해주세요.", parent=dlg)
+            go["v"] = rget(dlg)
+            if go["v"] is None:
                 return
             dlg.destroy()
         b = ttk.Frame(frm)
@@ -6668,7 +6702,6 @@ class App:
         ttk.Button(b, text="취소", command=dlg.destroy).pack(side="right")
         ttk.Button(b, text="저장할 폴더 고르기", command=ok).pack(side="right", padx=4)
         ent.bind("<Return>", ok)
-        ent.focus_set()
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         dlg.grab_set()
         dlg.wait_window()

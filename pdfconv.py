@@ -48,10 +48,12 @@ SHRINK_LEVELS = {
 }
 
 
-def _shrink_images_fallback(doc, thr, target, quality):
+def _shrink_images_fallback(doc, thr, target, quality, pages=None):
     """rewrite_images 가 없는 구버전 PyMuPDF 용: 그림을 하나씩 줄여서 교체"""
     done = set()
-    for page in doc:
+    for pi, page in enumerate(doc):
+        if pages is not None and pi not in pages:
+            continue
         for img in page.get_images(full=True):
             xref = img[0]
             if xref in done:
@@ -78,7 +80,7 @@ def _shrink_images_fallback(doc, thr, target, quality):
                 continue
 
 
-def shrink_pdf(src_bytes, dst, level, progress=None):
+def shrink_pdf(src_bytes, dst, level, progress=None, pages=None):
     """src_bytes(PDF 내용) 을 줄여서 dst 에 저장. (줄이기 전 크기, 줄인 뒤 크기) 반환"""
     thr, target, q = SHRINK_LEVELS[level]
     doc = fitz.open("pdf", src_bytes)
@@ -87,11 +89,11 @@ def shrink_pdf(src_bytes, dst, level, progress=None):
         if doc.needs_pass:
             raise ValueError("암호가 걸린 PDF 입니다.")
         _tick(progress, 0, 3, "그림 줄이는 중...")
-        if hasattr(doc, "rewrite_images"):
+        if pages is None and hasattr(doc, "rewrite_images"):
             doc.rewrite_images(dpi_threshold=thr, dpi_target=target, quality=q,
                                lossy=True, lossless=True, bitonal=True, color=True, gray=True)
         else:
-            _shrink_images_fallback(doc, thr, target, q)
+            _shrink_images_fallback(doc, thr, target, q, None if pages is None else set(pages))
         _tick(progress, 1, 3, "불필요한 데이터 정리 중...")
         try:
             doc.subset_fonts()                  # fontTools 가 있을 때만 동작
