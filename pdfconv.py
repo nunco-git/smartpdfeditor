@@ -117,7 +117,7 @@ def shrink_pdf(src_bytes, dst, level, progress=None, pages=None):
 # ──────────────────────────────────────────────────────────────
 # 1-2. 여러 PDF 합치기 (병합)
 def merge_pdfs(items, dst, progress=None):
-    """items = [{"path": 파일 경로 또는 "data": PDF 내용(bytes), "pages": [(원본 쪽(0부터), 회전 각도), ...]}, ...]
+    """items = [{"path": 파일 경로 또는 "data": PDF 내용(bytes), "password": 암호(있으면), "pages": [(원본 쪽(0부터), 회전 각도), ...]}, ...]
     목록 순서대로, 각 항목의 pages 순서대로 한 PDF 로 합쳐 dst 에 저장. 합친 쪽 수 반환.
     같은 파일을 여러 항목에 넣어도 되고, 한 항목 안에서 쪽을 순서 없이/여러 번 넣어도 됩니다.
     회전 각도는 원래 쪽의 회전에 더해집니다 (시계 방향, 90의 배수)."""
@@ -135,8 +135,8 @@ def merge_pdfs(items, dst, progress=None):
                 src = fitz.open(it["path"])
             name = it.get("name") or os.path.basename(it.get("path") or "") or f"{k + 1}번째 파일"
             try:
-                if src.needs_pass:
-                    raise ValueError(f"{name}: 암호가 걸린 PDF 입니다.")
+                if src.needs_pass and not src.authenticate(it.get("password") or ""):
+                    raise ValueError(f"{name}: 암호가 걸린 PDF 입니다 (암호가 맞지 않습니다).")
                 pages = it["pages"]
                 n = len(src)
                 i = 0

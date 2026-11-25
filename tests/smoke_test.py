@@ -881,6 +881,40 @@ _seq = [2, 0, 1, 2, 5, 4, 3]
 check(S.fmt_pages(_seq) == "3, 1-3, 6-4", f"쪽 표시 {S.fmt_pages(_seq)}")
 check(S.parse_pages(S.fmt_pages(_seq), 6, allow_dup=True) == _seq, "쪽 표시 ↔ 입력 되돌리기")
 
+step("쪽 회전 버튼 · 암호 PDF")
+app.view_var.set(S.VIEW_LABEL["cont"])      # 앞 점검에서 바뀐 보기 상태와 상관없이 같은 조건으로
+app.on_view()
+app.fit.set("width")
+app.on_fit()
+app.goto(0)
+pump(0.5)
+check(len(app.cv.find_withtag("rotbtn")) >= 4, "쪽 오른쪽 위 회전 버튼이 그려짐")
+_hit = None
+for _i in app.cv.find_withtag("rotbtn"):
+    if app.cv.type(_i) == "rectangle" and "rcw" in app.cv.gettags(_i):
+        _x0, _y0, _x1, _y1 = app.cv.coords(_i)
+        class _E: pass
+        _e = _E(); _e.x = int((_x0 + _x1) / 2 - app.cv.canvasx(0)); _e.y = int((_y0 + _y1) / 2 - app.cv.canvasy(0)); _e.state = 0
+        _hit = app.rot_button_at(_e)
+        break
+check(_hit is not None and _hit[1] == 90, f"회전 버튼 위치 인식 {_hit}")
+_enc = os.path.join(TMP, "암호.pdf")
+_ed = fitz.open(); _ed.new_page().insert_text((72, 100), "secret page", fontsize=14)
+_ed.save(_enc, encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="pw 1234", owner_pw="own"); _ed.close()
+_asked = []
+_old_ask = S.ask_password
+S.ask_password = lambda parent, name: (_asked.append(name), "pw 1234")[1]
+check(app.open_file(_enc), "암호 PDF 열기")
+check(len(_asked) == 1 and app.tab.password == "pw 1234" and "secret" in app.doc[0].get_text(), "암호 입력 후 내용 보임")
+app.rotate_pages([0], 90)
+check(app.save(), "암호 PDF 저장")
+_cd = fitz.open(_enc)
+check(_cd.needs_pass and _cd.authenticate("pw 1234") and _cd[0].rotation == 90, "저장해도 암호 유지 + 회전 저장")
+_cd.close()
+S.ask_password = _old_ask
+app.dirty = False
+app.close_tab(app.tab)
+
 step("종료")
 for t in app.tabs:
     t._dirty = False

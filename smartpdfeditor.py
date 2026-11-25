@@ -28,6 +28,7 @@
 필요: pip install pymupdf
 exe:  smartpdfeditor_build.bat 실행 → smartpdfeditor.exe
 """
+import math
 import os
 import sys
 import base64
@@ -250,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.26"
+APP_VER = "1.0.27"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -417,6 +418,7 @@ HELP_SECTIONS = [
     ("쪽(페이지) 다루기", "rot_r", [
         ("키", "Ctrl+L  /  Ctrl+R", "지금 쪽 왼쪽 / 오른쪽으로 회전"),
         ("키", "도구줄 겹친 쪽 아이콘", "여러 쪽 골라서 회전 · 전체 쪽 회전 ([페이지] 메뉴: 왼쪽·180°)"),
+        ("마우스", "쪽 오른쪽 위 ⟲ ⟳ 버튼", "그 쪽만 왼쪽 · 오른쪽으로 회전 (Ctrl+Z 되돌리기)"),
         ("키", "Ctrl+E", "원하는 쪽만 새 PDF로 저장 — 예) 7, 2, 10-12  /  8- (8쪽부터 끝까지)"),
     ]),
     ("찾기", "find", [
@@ -468,6 +470,7 @@ HELP_SECTIONS = [
     ]),
     ("알아두기", "pdf", [
         "스캔한(그림으로 된) PDF는 글자 정보가 없어 글자 수정·찾기가 되지 않습니다 → [파일 → 스캔본 글자 인식]으로 검색되는 PDF로 바꿀 수 있습니다.",
+        "암호가 걸린 PDF는 열 때 암호를 물어봅니다(3번까지). 저장할 때는 입력한 암호로 다시 암호가 걸립니다. 병합할 때도 파일마다 암호를 물어봅니다.",
         "[파일 → PDF 병합] 또는 도구줄의 [🔗 병합]으로 여러 PDF를 하나로 합칩니다 (같은 파일을 여러 번 넣거나, 가져올 쪽을 순서 없이 지정하거나, 쪽마다 회전할 수 있습니다).",
         "[파일 → PDF 용량 줄이기]로 사진·스캔 PDF 용량을 줄이고, [파일 → 워드·엑셀·한글 문서로 내보내기]로 글·표를 문서로 옮길 수 있습니다.",
         "수정한 글자는 맑은 고딕으로 다시 써집니다(원래 글꼴과 모양이 조금 다를 수 있음).",
@@ -1049,6 +1052,44 @@ class Popup(tk.Toplevel):
 
 
 def ask_text(parent, title, prompt, initial=""):
+    return _ask_text(parent, title, prompt, initial, False)
+
+
+def ask_password(parent, name):
+    """암호 입력 (입력한 글자는 ●로 가림). 취소하면 None"""
+    return _ask_text(parent, "암호 입력", f"{name}\n\n이 PDF는 암호가 걸려 있습니다. 암호를 입력하세요.", "", True)
+
+
+def open_pdf(src, password=None):
+    """PDF 열기 (src: 파일 경로 또는 bytes). 암호가 걸려 있으면 password로 풀어서 '암호 없는 메모리 문서'로 돌려줌
+    (고치기·되돌리기·변환이 모두 그대로 되도록). 암호가 없거나 틀리면 doc.needs_pass 가 참인 채로 돌려줌."""
+    d = fitz.open("pdf", src) if isinstance(src, (bytes, bytearray)) else fitz.open(src)
+    if d.needs_pass and password is not None and d.authenticate(password):
+        plain = fitz.open("pdf", d.tobytes(encryption=fitz.PDF_ENCRYPT_NONE))
+        d.close()
+        return plain
+    return d
+
+
+def open_pdf_ask(src, name, parent):
+    """open_pdf + 암호가 걸려 있으면 입력창을 띄움 (틀리면 3번까지 다시). 반환 (문서, 입력한 암호 또는 None) · 취소면 (None, None)"""
+    d = open_pdf(src)
+    if not d.needs_pass:
+        return d, None
+    d.close()
+    for k in range(3):
+        pw = ask_password(parent, name)
+        if pw is None:
+            return None, None
+        doc = open_pdf(src, pw)
+        if not doc.needs_pass:
+            return doc, pw
+        doc.close()
+        messagebox.showwarning(APP, "암호가 맞지 않습니다." + ("\n다시 입력해주세요." if k < 2 else ""), parent=parent)
+    return None, None
+
+
+def _ask_text(parent, title, prompt, initial, secret):
     dlg = Popup(parent)
     dlg.title(title)
     dlg.transient(parent.winfo_toplevel())
@@ -1057,14 +1098,14 @@ def ask_text(parent, title, prompt, initial=""):
     frm.pack()
     ttk.Label(frm, text=prompt).pack(anchor="w")
     v = tk.StringVar(value=initial)
-    ent = ttk.Entry(frm, textvariable=v, width=40)
+    ent = ttk.Entry(frm, textvariable=v, width=40, show="●" if secret else "")
     ent.pack(pady=6)
     ent.focus_set()
     ent.select_range(0, "end")
     res = {"v": None}
 
     def ok(_=None):
-        res["v"] = v.get().strip() or None
+        res["v"] = (v.get() if secret else v.get().strip()) or None      # 암호는 앞뒤 공백도 그대로
         dlg.destroy()
     b = ttk.Frame(frm)
     b.pack(fill="x")
@@ -2032,6 +2073,7 @@ class DocTab:
         self.slots = {}
         self.imgs = {}
         self._sizes_key = None
+        self.password = None     # 암호 걸린 PDF를 열 때 입력한 암호 (저장할 때 같은 암호로 다시 걸어줌)
         self.frame = None        # 탭 막대의 탭 위젯
 
     @property
@@ -3394,9 +3436,8 @@ class App:
                     self.goto(page)
                 return True
         try:
-            doc = fitz.open(p)
-            if doc.needs_pass:
-                messagebox.showerror(APP, "암호가 걸린 PDF는 열 수 없습니다.")
+            doc, pw = open_pdf_ask(p, os.path.basename(p), self.root)
+            if doc is None:                       # 암호 입력을 취소하거나 3번 틀림
                 return False
         except Exception as ex:
             messagebox.showerror(APP, f"열 수 없습니다:\n{ex}")
@@ -3404,7 +3445,7 @@ class App:
         if page is None:
             page = self.conf["last_page"].get(p, 0)
         t = DocTab()
-        t.doc, t.path = doc, p
+        t.doc, t.path, t.password = doc, p, pw
         t.page_no = page if 0 <= page < len(doc) else 0
         t.frame = ttk.Frame(self.tabbar, height=1)
         self.tabs.append(t)
@@ -3934,6 +3975,13 @@ class App:
         self.sel = {"page": p, "text": text, "rects": [fitz.Rect(rect)], "y": frac}
         self.draw_selection()
 
+    def enc_args(self):
+        """암호 걸린 PDF를 열었다면 저장할 때 같은 암호를 다시 걸어줌 (열 때 입력한 암호가 열기·편집 암호가 됨)"""
+        pw = self.tab.password
+        if not pw:
+            return {}
+        return {"encryption": fitz.PDF_ENCRYPT_AES_256, "user_pw": pw, "owner_pw": pw}
+
     def save(self):
         """지금 파일에 바로 덮어쓰기 (Ctrl+S). 저장할 수 없는 곳이면 다른 이름으로 저장"""
         if not self.doc:
@@ -3943,16 +3991,16 @@ class App:
         p = self.path
         tmp = os.path.join(os.path.dirname(p), f".~{os.path.basename(p)}.{os.getpid()}.tmp")
         try:
-            data = self.doc.tobytes(garbage=3, deflate=True)   # 감춘 글자 등이 파일에 남지 않게 통째로 다시 씀
+            data = self.doc.tobytes(garbage=3, deflate=True, **self.enc_args())   # 감춘 글자 등이 파일에 남지 않게 통째로 다시 씀
             with open(tmp, "wb") as f:                          # 임시 파일에 다 쓴 뒤 바꿔치기 → 도중에 실패해도 원본 안전
                 f.write(data)
             self.doc.close()
             try:
                 os.replace(tmp, p)
             except OSError:
-                self.doc = fitz.open(stream=data, filetype="pdf")   # 고친 내용은 그대로 유지
+                self.doc = open_pdf(data, self.tab.password)   # 고친 내용은 그대로 유지
                 raise
-            self.doc = fitz.open(p)
+            self.doc = open_pdf(p, self.tab.password)
         except Exception as ex:
             try:
                 if os.path.exists(tmp):
@@ -4081,7 +4129,7 @@ class App:
                 messagebox.showwarning(APP, "그 파일은 다른 탭에서 열려 있습니다. 그 탭을 닫은 뒤 다시 해 주세요.")
                 return False
         try:
-            self.doc.save(p, garbage=3, deflate=True)
+            self.doc.save(p, garbage=3, deflate=True, **self.enc_args())
         except Exception as ex:
             messagebox.showerror(APP, f"저장 실패:\n{ex}")
             return False
@@ -5176,6 +5224,7 @@ class App:
                 self.cv.delete(f"img{p}")
                 self.cv.delete(f"memo{p}")
                 self.cv.delete(f"memolink{p}")
+                self.cv.delete(f"rp{p}")
                 del self.imgs[p]
         for p in want:
             if p in self.imgs:
@@ -5196,7 +5245,8 @@ class App:
             if p in self._memo_pages:
                 self.draw_memos(p)
             self.draw_links(p)
-        for tag in ("tsel", "hl"):
+            self.draw_rot_buttons(p, img.width())
+        for tag in ("rotbtn", "tsel", "hl"):
             if self.cv.find_withtag(tag):
                 self.cv.tag_raise(tag)
         self.place_wall()
@@ -5212,6 +5262,41 @@ class App:
             if best is not None and best != self.page_no:
                 self.page_no = best
                 self.update_page_label()
+
+    def draw_rot_buttons(self, p, img_w):
+        """쪽 내용 오른쪽 위에 회전 버튼 2개(⟲ 왼쪽 · ⟳ 오른쪽) — 누르면 그 쪽만 회전"""
+        x, y, w, h = self.slots[p]
+        if img_w < 150:
+            return
+        sz = 24 if img_w >= 300 else 18
+        gap, m = 4, 6
+        x1 = x + img_w - m
+        for name, d in (("rcw", 90), ("rccw", -90)):          # 오른쪽 끝이 ⟳(오른쪽으로), 그 왼쪽이 ⟲(왼쪽으로)
+            x0 = x1 - sz
+            tg = ("rotbtn", f"rp{p}", name)
+            self.cv.create_rectangle(x0, y + m, x1, y + m + sz, fill="#ffffff", outline="#8a8f98", width=1, tags=tg)
+            pad = sz * 0.28
+            cx, cy, r = (x0 + x1) / 2, y + m + sz / 2, sz / 2 - pad
+            a0, ext = (75, -265) if d > 0 else (105, 265)      # ⟳: 시계 방향으로 돌아가는 화살표 / ⟲: 반시계 방향
+            pts = []
+            for k in range(15):
+                ang = math.radians(a0 + ext * k / 14)
+                pts += [cx + r * math.cos(ang), cy - r * math.sin(ang)]
+            self.cv.create_line(*pts, fill="#2b4c7e", width=2, arrow="last", arrowshape=(6, 7, 3), tags=tg)
+            x1 = x0 - gap
+
+    def rot_button_at(self, e):
+        """마우스가 회전 버튼 위면 (쪽 번호, 회전 각도) — 아니면 None"""
+        if not self.doc:
+            return None
+        cx, cy = self.cv.canvasx(e.x), self.cv.canvasy(e.y)
+        for it in reversed(self.cv.find_overlapping(cx, cy, cx, cy)):
+            tg = self.cv.gettags(it)
+            if "rotbtn" in tg:
+                p = next((int(t[2:]) for t in tg if t.startswith("rp") and t[2:].isdigit()), None)
+                if p is not None:
+                    return p, (90 if "rcw" in tg else -90)
+        return None
 
     def update_page_label(self):
         if self.doc:
@@ -5456,6 +5541,11 @@ class App:
         self.cv.delete("hl")
         if not self.doc:
             return
+        hit = self.rot_button_at(e)
+        if hit:
+            self.cv.configure(cursor="hand2")
+            self.status.set(f"{hit[0] + 1}쪽을 {'오른쪽' if hit[1] > 0 else '왼쪽'}으로 회전 (Ctrl+Z 되돌리기)")
+            return
         p, pt = self.locate(e)
         if p is None:
             self.cv.configure(cursor="")
@@ -5496,6 +5586,13 @@ class App:
 
     def on_press(self, e):
         self.cv.focus_set()
+        hit = self.rot_button_at(e)
+        if hit:                                  # 쪽 오른쪽 위 회전 버튼
+            self.press = None
+            self.selecting = None
+            self.memo_drag = None
+            self.rotate_pages([hit[0]], hit[1])
+            return
         if self.app_mode.get() == "view":   # 뷰어 모드: 쪽 위에서 끌면 글자 선택, 바깥에서 끌면 화면 이동
             self.press = None
             cx, cy = self.cv.canvasx(e.x), self.cv.canvasy(e.y)
@@ -6516,7 +6613,7 @@ class App:
             out = fitz.open()
             for i in pages:
                 out.insert_pdf(self.doc, from_page=i, to_page=i)
-            out.save(p, garbage=3, deflate=True)
+            out.save(p, garbage=3, deflate=True, **self.enc_args())
             out.close()
             self.status.set(f"{len(pages)}쪽을 저장했습니다: {p}")
         except Exception as ex:
@@ -6745,12 +6842,12 @@ class App:
                 prev.create_text(115, 145, text="미리보기를 만들 수 없습니다", fill="#a00")
 
         # ── 파일 추가
-        def add_entry(name, path, data, doc):
+        def add_entry(name, path, data, doc, password=None):
             if len(doc) == 0:
                 doc.close()
                 messagebox.showwarning(APP, f"{name}\n\n쪽이 하나도 없는 PDF입니다.", parent=dlg)
                 return None
-            ents.append({"name": name, "path": path, "data": data, "doc": doc,
+            ents.append({"name": name, "path": path, "data": data, "doc": doc, "password": password,
                          "pages": [[k, 0] for k in range(len(doc))]})
             return len(ents) - 1
 
@@ -6762,15 +6859,13 @@ class App:
             last = None
             for p in ps:
                 try:
-                    d = fitz.open(p)
+                    d, pw = open_pdf_ask(p, os.path.basename(p), dlg)      # 암호가 걸려 있으면 입력창
                 except Exception as ex:
                     messagebox.showwarning(APP, f"{os.path.basename(p)}\n\n열 수 없습니다:\n{ex}", parent=dlg)
                     continue
-                if d.needs_pass:
-                    d.close()
-                    messagebox.showwarning(APP, f"{os.path.basename(p)}\n\n암호가 걸린 PDF는 합칠 수 없습니다.", parent=dlg)
+                if d is None:                                               # 암호 입력을 취소하거나 3번 틀림 → 이 파일은 건너뜀
                     continue
-                k = add_entry(os.path.basename(p), p, None, d)
+                k = add_entry(os.path.basename(p), p, None, d, pw)
                 if k is not None:
                     last = k
             if last is not None:
@@ -6953,8 +7048,8 @@ class App:
         dlg.grab_set()
         dlg.wait_window()
 
-        snap = [{"name": e["name"], "path": e["path"], "data": e["data"], "pages": [tuple(x) for x in e["pages"]]}
-                for e in ents]
+        snap = [{"name": e["name"], "path": e["path"], "data": e["data"], "password": e["password"],
+                 "pages": [tuple(x) for x in e["pages"]]} for e in ents]
         for d in {id(e["doc"]): e["doc"] for e in ents}.values():      # 같은 PDF를 여러 번 넣었어도 한 번만 닫음
             try:
                 d.close()
