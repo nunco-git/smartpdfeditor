@@ -250,7 +250,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.25"
+APP_VER = "1.0.26"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -468,6 +468,7 @@ HELP_SECTIONS = [
     ]),
     ("알아두기", "pdf", [
         "스캔한(그림으로 된) PDF는 글자 정보가 없어 글자 수정·찾기가 되지 않습니다 → [파일 → 스캔본 글자 인식]으로 검색되는 PDF로 바꿀 수 있습니다.",
+        "[파일 → PDF 병합] 또는 도구줄의 [🔗 병합]으로 여러 PDF를 하나로 합칩니다 (같은 파일을 여러 번 넣거나, 가져올 쪽을 순서 없이 지정하거나, 쪽마다 회전할 수 있습니다).",
         "[파일 → PDF 용량 줄이기]로 사진·스캔 PDF 용량을 줄이고, [파일 → 워드·엑셀·한글 문서로 내보내기]로 글·표를 문서로 옮길 수 있습니다.",
         "수정한 글자는 맑은 고딕으로 다시 써집니다(원래 글꼴과 모양이 조금 다를 수 있음).",
         "감추기로 지운 내용은 저장하면 되살릴 수 없습니다. 원본은 따로 남겨 두세요.",
@@ -1454,8 +1455,8 @@ def hex2rgb(h):
     return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
 
 
-def parse_pages(text, n):
-    """'1-3, 5, 9-7, 10-' → 0부터 시작하는 쪽 번호 목록 (입력 순서, 중복 제거)"""
+def parse_pages(text, n, allow_dup=False):
+    """'1-3, 5, 9-7, 10-' → 0부터 시작하는 쪽 번호 목록 (입력 순서, 기본은 중복 제거 / allow_dup=True 면 같은 쪽을 여러 번 허용)"""
     out = []
     for tok in text.replace(" ", ",").split(","):
         tok = tok.strip()
@@ -1471,11 +1472,30 @@ def parse_pages(text, n):
         for p in rng:
             if not 1 <= p <= n:
                 raise ValueError(f"{p}쪽은 없습니다 (전체 {n}쪽).")
-            if p - 1 not in out:
+            if allow_dup or p - 1 not in out:
                 out.append(p - 1)
     if not out:
         raise ValueError("쪽 번호를 입력해주세요.")
     return out
+
+
+def fmt_pages(pages):
+    """0부터 시작하는 쪽 번호 목록 → '1-3, 5, 9-7' (3쪽 이상 이어지면 범위로 줄여 보여줌)"""
+    out, i = [], 0
+    while i < len(pages):
+        j = i
+        if i + 1 < len(pages) and abs(pages[i + 1] - pages[i]) == 1:
+            step = pages[i + 1] - pages[i]
+            j = i + 1
+            while j + 1 < len(pages) and pages[j + 1] - pages[j] == step:
+                j += 1
+        if j - i >= 2:
+            out.append(f"{pages[i] + 1}-{pages[j] + 1}")
+            i = j + 1
+        else:
+            out.append(str(pages[i] + 1))
+            i += 1
+    return ", ".join(out)
 
 
 def color_tuple(c):
@@ -2868,6 +2888,7 @@ class App:
                        image=self.menu_icon("print"), compound="left")
         fm.add_command(label="원하는 쪽만 저장...", accelerator="Ctrl+E", command=self.extract_dialog)
         fm.add_separator()
+        fm.add_command(label="PDF 병합 (여러 PDF를 하나로)...", command=self.merge_dialog)
         fm.add_command(label="PDF 용량 줄이기...", command=self.shrink_dialog)
         fm.add_command(label="워드·엑셀·한글 문서로 내보내기...", command=self.export_dialog)
         fm.add_command(label="그림 파일로 변환 (PNG·JPG)...", command=self.images_dialog)
@@ -3085,10 +3106,11 @@ class App:
             Tooltip(rb, tips[k])
             self.tool_rbs[k] = rb
             self.labeled.append(rb)
-        # 도구 옵션(펼침메뉴 등)은 이 바로가기 왼쪽에 보임: 용량 줄이기 · 문서(워드·엑셀·한글) 변환 · 그림 변환
+        # 도구 옵션(펼침메뉴 등)은 이 바로가기 왼쪽에 보임: 병합 · 용량 줄이기 · 문서(워드·엑셀·한글) 변환 · 그림 변환
         self.quick = ttk.Frame(self.toolarea)
         ttk.Separator(self.quick, orient="vertical").pack(side="left", fill="y", padx=4)
-        for txt, cmd, tip in (("📉 용량줄이기", self.shrink_dialog, "PDF 용량 줄이기 — 사진·스캔 그림을 줄여 새 파일로 저장"),
+        for txt, cmd, tip in (("🔗 병합", self.merge_dialog, "PDF 병합 — 여러 PDF(같은 파일도 가능)를 쪽 선택·회전·순서를 정해 하나로 합치기"),
+                              ("📉 용량줄이기", self.shrink_dialog, "PDF 용량 줄이기 — 사진·스캔 그림을 줄여 새 파일로 저장"),
                               ("📄 문서변환", self.export_dialog, "워드·엑셀·한글 문서로 내보내기"),
                               ("🖼 그림변환", self.images_dialog, "쪽을 그림 파일(PNG·JPG)로 저장")):
             qb = ttk.Button(self.quick, text=txt, style="Toolbutton", command=cmd)
@@ -6604,6 +6626,362 @@ class App:
                 self.open_file(p)
         else:
             messagebox.showinfo(APP, f"{text}\n\n{p}")
+
+    def merge_dialog(self):
+        """여러 PDF 합치기: 파일 목록(같은 파일 중복 가능·순서 조정) + 파일별 가져올 쪽(순서 자유) + 쪽별 회전"""
+        import pdfconv
+        ents = []                      # 항목: {"name","path","data","doc","pages":[[원본쪽, 회전], ...]}
+        dlg = Popup(self.root)
+        dlg.title("PDF 병합")
+        dlg.transient(self.root)
+        dlg.minsize(780, 600)
+        dlg.size_hint = (900, 640)
+        shown = {"i": None}            # 아래 쪽 목록이 지금 보여주는 파일 (같으면 다시 그리지 않아 쪽 선택이 유지됨)
+        top = ttk.Frame(dlg, padding=(10, 10, 10, 0))
+        top.pack(fill="x")
+        mid = ttk.Frame(dlg, padding=(10, 6, 10, 0))
+        mid.pack(fill="x")
+        bot = ttk.Frame(dlg, padding=(10, 8, 10, 10))
+        bot.pack(side="bottom", fill="x")
+        pgf = ttk.LabelFrame(dlg, text=" 쪽 순서·회전 (위 목록에서 고른 파일) ", padding=8)
+        pgf.pack(fill="both", expand=True, padx=10, pady=(8, 0))
+
+        # ── 파일 목록
+        cols = ("no", "name", "total", "spec", "rot")
+        ft = ttk.Treeview(mid, columns=cols, show="headings", height=7, selectmode="browse")
+        for c, t, w, a in (("no", "순서", 44, "center"), ("name", "파일", 330, "w"), ("total", "전체 쪽", 66, "center"),
+                           ("spec", "가져올 쪽", 220, "w"), ("rot", "회전한 쪽", 80, "center")):
+            ft.heading(c, text=t)
+            ft.column(c, width=w, anchor=a, stretch=(c == "name"))
+        fsb = ttk.Scrollbar(mid, orient="vertical", command=ft.yview)
+        ft.configure(yscrollcommand=fsb.set)
+        ft.pack(side="left", fill="x", expand=True)
+        fsb.pack(side="left", fill="y")
+
+        # ── 쪽 목록 + 회전 버튼 + 미리보기
+        pt = ttk.Treeview(pgf, columns=("no", "src", "rot"), show="headings", height=9, selectmode="extended")
+        for c, t, w in (("no", "합본 순서", 70), ("src", "원본 쪽", 70), ("rot", "회전", 70)):
+            pt.heading(c, text=t)
+            pt.column(c, width=w, anchor="center", stretch=False)
+        psb = ttk.Scrollbar(pgf, orient="vertical", command=pt.yview)
+        pt.configure(yscrollcommand=psb.set)
+        pt.pack(side="left", fill="y")
+        psb.pack(side="left", fill="y")
+        ctl = ttk.Frame(pgf, padding=(10, 0))
+        ctl.pack(side="left", fill="y")
+        prev = tk.Canvas(pgf, width=230, height=290, bg="#e9e9e9", highlightthickness=1, highlightbackground="#bbb")
+        prev.pack(side="right", padx=(6, 0))
+        pv = {"img": None}
+
+        spec_v = tk.StringVar()
+        sum_v = tk.StringVar()
+        hint = ttk.Label(mid, text="", foreground="#666")
+
+        def cur():
+            sel = ft.selection()
+            return int(sel[0]) if sel else None
+
+        def rot_text(d):
+            return "—" if not d else f"{d}°"
+
+        def refresh_files(select=None):
+            ft.delete(*ft.get_children())
+            for i, e in enumerate(ents):
+                pgs = [p for p, _ in e["pages"]]
+                allp = pgs == list(range(len(e["doc"])))
+                nrot = sum(1 for _, d in e["pages"] if d)
+                ft.insert("", "end", iid=str(i), values=(
+                    i + 1, e["name"], len(e["doc"]), "전체" if allp else f"{fmt_pages(pgs) or '(없음)'}  ({len(pgs)}쪽)",
+                    f"{nrot}쪽" if nrot else "—"))
+            if select is not None and 0 <= select < len(ents):
+                ft.selection_set(str(select))
+                ft.see(str(select))
+            refresh_pages()
+            tp = sum(len(e["pages"]) for e in ents)
+            sum_v.set(f"파일 {len(ents)}개 · 합친 뒤 총 {tp}쪽" if ents else "위의 [➕ 파일 추가]로 합칠 PDF를 넣어주세요.")
+
+        def refresh_pages(select=None):
+            pt.delete(*pt.get_children())
+            i = cur()
+            shown["i"] = i
+            if i is None:
+                spec_v.set("")
+                draw_preview(None)
+                return
+            e = ents[i]
+            pgs = [p for p, _ in e["pages"]]
+            spec_v.set("" if pgs == list(range(len(e["doc"]))) else fmt_pages(pgs))
+            for k, (p, d) in enumerate(e["pages"]):
+                pt.insert("", "end", iid=str(k), values=(k + 1, f"{p + 1}쪽", rot_text(d)))
+            if select:
+                keep = [str(k) for k in select if 0 <= k < len(e["pages"])]
+                if keep:
+                    pt.selection_set(keep)
+                    pt.see(keep[0])
+            draw_preview(None)
+
+        def draw_preview(_=None):
+            prev.delete("all")
+            pv["img"] = None
+            i = cur()
+            sel = pt.selection()
+            if i is None or not sel:
+                prev.create_text(115, 145, text="쪽을 고르면\n미리보기가 보입니다", fill="#777", justify="center")
+                return
+            p, d = ents[i]["pages"][int(sel[0])]
+            try:
+                pg = ents[i]["doc"][p]
+                orig = pg.rotation
+                pg.set_rotation((orig + d) % 360)
+                try:
+                    r = pg.rect
+                    z = min(220 / max(1, r.width), 280 / max(1, r.height))
+                    img = page_photo(pg, z)
+                finally:
+                    pg.set_rotation(orig)
+                pv["img"] = img
+                prev.create_image(115, 145, image=img)
+            except Exception:
+                prev.create_text(115, 145, text="미리보기를 만들 수 없습니다", fill="#a00")
+
+        # ── 파일 추가
+        def add_entry(name, path, data, doc):
+            if len(doc) == 0:
+                doc.close()
+                messagebox.showwarning(APP, f"{name}\n\n쪽이 하나도 없는 PDF입니다.", parent=dlg)
+                return None
+            ents.append({"name": name, "path": path, "data": data, "doc": doc,
+                         "pages": [[k, 0] for k in range(len(doc))]})
+            return len(ents) - 1
+
+        def add_files():
+            init = os.path.dirname(self.path) if self.path else (self.conf.get("last_dir") or "")
+            ps = filedialog.askopenfilenames(parent=dlg, title="합칠 PDF 고르기 (여러 개 선택 가능)",
+                                             filetypes=[("PDF", "*.pdf"), ("모든 파일", "*.*")],
+                                             initialdir=init if init and os.path.isdir(init) else None)
+            last = None
+            for p in ps:
+                try:
+                    d = fitz.open(p)
+                except Exception as ex:
+                    messagebox.showwarning(APP, f"{os.path.basename(p)}\n\n열 수 없습니다:\n{ex}", parent=dlg)
+                    continue
+                if d.needs_pass:
+                    d.close()
+                    messagebox.showwarning(APP, f"{os.path.basename(p)}\n\n암호가 걸린 PDF는 합칠 수 없습니다.", parent=dlg)
+                    continue
+                k = add_entry(os.path.basename(p), p, None, d)
+                if k is not None:
+                    last = k
+            if last is not None:
+                refresh_files(last)
+
+        def add_open_doc(t):
+            try:
+                data = t.doc.tobytes()                       # 아직 저장하지 않은 수정까지 포함
+                d = fitz.open("pdf", data)
+            except Exception as ex:
+                messagebox.showwarning(APP, f"열린 문서를 가져올 수 없습니다:\n{ex}", parent=dlg)
+                return
+            k = add_entry(f"{t.title} (열린 문서)", None, data, d)
+            if k is not None:
+                refresh_files(k)
+
+        def add_open():
+            tabs = [t for t in self.tabs if t.doc is not None]
+            if not tabs:
+                messagebox.showinfo(APP, "열려 있는 문서가 없습니다.", parent=dlg)
+                return
+            if len(tabs) == 1:
+                add_open_doc(tabs[0])
+                return
+            m = tk.Menu(dlg, tearoff=0)
+            for t in tabs:
+                m.add_command(label=t.title, command=lambda t=t: add_open_doc(t))
+            try:
+                m.tk_popup(dlg.winfo_pointerx(), dlg.winfo_pointery())
+            finally:
+                m.grab_release()
+
+        def dup():
+            i = cur()
+            if i is None:
+                return
+            e = ents[i]
+            ne = dict(e, pages=[list(x) for x in e["pages"]])        # 같은 PDF를 한 번 더 (쪽·회전도 그대로 복사)
+            ents.insert(i + 1, ne)
+            refresh_files(i + 1)
+
+        def remove():
+            i = cur()
+            if i is None:
+                return
+            ents.pop(i)
+            refresh_files(min(i, len(ents) - 1) if ents else None)
+
+        def move(delta):
+            i = cur()
+            if i is None or not 0 <= i + delta < len(ents):
+                return
+            ents[i], ents[i + delta] = ents[i + delta], ents[i]
+            refresh_files(i + delta)
+
+        # ── 가져올 쪽 (글로 입력)
+        def apply_spec(_=None):
+            i = cur()
+            if i is None:
+                return
+            e = ents[i]
+            txt = spec_v.get().strip()
+            n = len(e["doc"])
+            try:
+                pgs = list(range(n)) if not txt else parse_pages(txt, n, allow_dup=True)
+            except ValueError as ex:
+                messagebox.showwarning(APP, str(ex) if "쪽" in str(ex) else "쪽 번호를 확인해주세요.\n예) 3, 1-2, 7-5", parent=dlg)
+                return
+            old = {}
+            for p, d in e["pages"]:
+                old.setdefault(p, d)                     # 전에 정해 둔 회전은 같은 쪽에 그대로 이어줌
+            e["pages"] = [[p, old.get(p, 0)] for p in pgs]
+            refresh_files(i)
+
+        def all_pages():
+            i = cur()
+            if i is None:
+                return
+            e = ents[i]
+            old = {}
+            for p, d in e["pages"]:
+                old.setdefault(p, d)
+            e["pages"] = [[p, old.get(p, 0)] for p in range(len(e["doc"]))]
+            refresh_files(i)
+
+        # ── 쪽 회전·순서
+        def sel_pages():
+            return sorted(int(s) for s in pt.selection())
+
+        def rotate(delta):
+            i = cur()
+            sel = sel_pages()
+            if i is None or not sel:
+                messagebox.showinfo(APP, "회전할 쪽을 아래 목록에서 먼저 골라주세요.\n(Ctrl·Shift로 여러 쪽 선택, Ctrl+A 전체 선택)", parent=dlg)
+                return
+            for k in sel:
+                pgd = ents[i]["pages"][k]
+                pgd[1] = 0 if delta is None else (pgd[1] + delta) % 360
+            refresh_files(i)
+            refresh_pages(sel)
+            pt.selection_set([str(k) for k in sel])
+            draw_preview()
+
+        def move_pages(delta):
+            i = cur()
+            sel = sel_pages()
+            if i is None or not sel:
+                return
+            pgs = ents[i]["pages"]
+            if delta < 0:
+                if sel[0] == 0:
+                    return
+                for k in sel:
+                    pgs[k - 1], pgs[k] = pgs[k], pgs[k - 1]
+                new = [k - 1 for k in sel]
+            else:
+                if sel[-1] == len(pgs) - 1:
+                    return
+                for k in reversed(sel):
+                    pgs[k + 1], pgs[k] = pgs[k], pgs[k + 1]
+                new = [k + 1 for k in sel]
+            refresh_files(i)
+            refresh_pages(new)
+            pt.selection_set([str(k) for k in new])
+            draw_preview()
+
+        def drop_pages():
+            i = cur()
+            sel = sel_pages()
+            if i is None or not sel:
+                return
+            if len(sel) >= len(ents[i]["pages"]):
+                messagebox.showinfo(APP, "모든 쪽을 뺄 수는 없습니다.\n이 파일을 통째로 빼려면 위 목록의 [✖ 파일 빼기]를 누르세요.", parent=dlg)
+                return
+            ents[i]["pages"] = [x for k, x in enumerate(ents[i]["pages"]) if k not in set(sel)]
+            refresh_files(i)
+
+        # ── 버튼 배치
+        for txt, cmd in (("➕ 파일 추가...", add_files), ("📄 열린 문서 추가", add_open), ("⧉ 같은 파일 한 번 더", dup),
+                         ("▲ 위로", lambda: move(-1)), ("▼ 아래로", lambda: move(+1)), ("✖ 파일 빼기", remove)):
+            ttk.Button(top, text=txt, command=cmd).pack(side="left", padx=(0, 4))
+        ttk.Label(top, text="같은 파일을 여러 번 넣어도 됩니다", foreground="#666").pack(side="left", padx=8)
+
+        sp = ttk.Frame(dlg, padding=(10, 6, 10, 0))
+        sp.pack(fill="x", after=mid)
+        ttk.Label(sp, text="가져올 쪽").pack(side="left")
+        se = ttk.Entry(sp, textvariable=spec_v, width=34)
+        se.pack(side="left", padx=6)
+        ttk.Button(sp, text="적용", command=apply_spec).pack(side="left")
+        ttk.Button(sp, text="전체 쪽", command=all_pages).pack(side="left", padx=4)
+        ttk.Label(sp, text="예) 3, 1-2, 7-5   (순서 마음대로 · 거꾸로 7-5 · 같은 쪽 여러 번 가능 · 비우면 전체)",
+                  foreground="#666").pack(side="left", padx=6)
+        se.bind("<Return>", apply_spec)
+
+        for txt, cmd in (("⟲ 왼쪽으로 90°", lambda: rotate(-90)), ("⟳ 오른쪽으로 90°", lambda: rotate(90)),
+                         ("↻ 180° 돌리기", lambda: rotate(180)), ("회전 없애기", lambda: rotate(None)),
+                         ("▲ 쪽 위로", lambda: move_pages(-1)), ("▼ 쪽 아래로", lambda: move_pages(+1)),
+                         ("✖ 쪽 빼기", drop_pages)):
+            ttk.Button(ctl, text=txt, command=cmd, width=16).pack(pady=2)
+        ttk.Label(ctl, text="쪽을 골라 누르세요\n(여러 쪽 선택 가능)", foreground="#666", justify="left").pack(pady=(10, 0))
+
+        ft.bind("<<TreeviewSelect>>", lambda e: refresh_pages() if cur() != shown["i"] else None)
+        pt.bind("<<TreeviewSelect>>", draw_preview)
+        ft.bind("<Delete>", lambda e: remove())
+        pt.bind("<Control-a>", lambda e: (pt.selection_set(pt.get_children()), "break")[1])
+
+        go = {"v": False}
+
+        def do_merge():
+            if not ents or not sum(len(e["pages"]) for e in ents):
+                messagebox.showinfo(APP, "합칠 PDF를 먼저 추가해주세요.", parent=dlg)
+                return
+            go["v"] = True
+            dlg.destroy()
+        ttk.Label(bot, textvariable=sum_v).pack(side="left")
+        ttk.Button(bot, text="취소", command=dlg.destroy).pack(side="right")
+        ttk.Button(bot, text="병합해서 저장...", command=do_merge).pack(side="right", padx=4)
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        refresh_files()
+        dlg.grab_set()
+        dlg.wait_window()
+
+        snap = [{"name": e["name"], "path": e["path"], "data": e["data"], "pages": [tuple(x) for x in e["pages"]]}
+                for e in ents]
+        for d in {id(e["doc"]): e["doc"] for e in ents}.values():      # 같은 PDF를 여러 번 넣었어도 한 번만 닫음
+            try:
+                d.close()
+            except Exception:
+                pass
+        if not go["v"] or not snap:
+            return
+        first = next((e["path"] for e in snap if e["path"]), None) or self.path
+        initdir = os.path.dirname(first) if first else desktop_dir()
+        out = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF", "*.pdf")], initialdir=initdir,
+                                           initialfile="병합.pdf", title="합친 PDF 저장")
+        if not out:
+            return
+        used = {os.path.normcase(os.path.abspath(e["path"])) for e in snap if e["path"]}
+        used |= {os.path.normcase(os.path.abspath(t.path)) for t in self.tabs if t.path}
+        if os.path.normcase(os.path.abspath(out)) in used:
+            messagebox.showwarning(APP, "합치는 파일이나 열려 있는 파일과 같은 이름으로는 저장할 수 없습니다.\n다른 이름으로 저장해주세요.")
+            return
+
+        def done(res, err):
+            if err == "cancel":
+                self.status.set("취소했습니다.")
+            elif err:
+                messagebox.showerror(APP, f"병합 실패:\n{err}")
+            else:
+                self._after_make(out, f"{len(snap)}개 파일을 합쳐 {res}쪽 PDF를 만들었습니다", openable=True)
+        self._run_job("PDF 병합", lambda pr: pdfconv.merge_pdfs(snap, out, pr), done)
 
     def shrink_dialog(self):
         if not self.doc:

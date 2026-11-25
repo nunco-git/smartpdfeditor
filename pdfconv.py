@@ -115,6 +115,67 @@ def shrink_pdf(src_bytes, dst, level, progress=None, pages=None):
 
 
 # ──────────────────────────────────────────────────────────────
+# 1-2. 여러 PDF 합치기 (병합)
+def merge_pdfs(items, dst, progress=None):
+    """items = [{"path": 파일 경로 또는 "data": PDF 내용(bytes), "pages": [(원본 쪽(0부터), 회전 각도), ...]}, ...]
+    목록 순서대로, 각 항목의 pages 순서대로 한 PDF 로 합쳐 dst 에 저장. 합친 쪽 수 반환.
+    같은 파일을 여러 항목에 넣어도 되고, 한 항목 안에서 쪽을 순서 없이/여러 번 넣어도 됩니다.
+    회전 각도는 원래 쪽의 회전에 더해집니다 (시계 방향, 90의 배수)."""
+    total = sum(len(it["pages"]) for it in items)
+    if total <= 0:
+        raise ValueError("합칠 쪽이 없습니다.")
+    out = fitz.open()
+    done = 0
+    try:
+        _tick(progress, 0, total, "합치는 중...")
+        for k, it in enumerate(items):
+            if it.get("data") is not None:
+                src = fitz.open("pdf", it["data"])
+            else:
+                src = fitz.open(it["path"])
+            name = it.get("name") or os.path.basename(it.get("path") or "") or f"{k + 1}번째 파일"
+            try:
+                if src.needs_pass:
+                    raise ValueError(f"{name}: 암호가 걸린 PDF 입니다.")
+                pages = it["pages"]
+                n = len(src)
+                i = 0
+                while i < len(pages):
+                    j = i                                   # 이어지는 쪽(3,4,5...)은 한꺼번에 넣어 용량 절약
+                    while j + 1 < len(pages) and pages[j + 1][0] == pages[j][0] + 1:
+                        j += 1
+                    a, b = pages[i][0], pages[j][0]
+                    if not (0 <= a < n and 0 <= b < n):
+                        raise ValueError(f"{name}: {max(a, b) + 1}쪽은 없습니다 (전체 {n}쪽).")
+                    first = len(out)
+                    out.insert_pdf(src, from_page=a, to_page=b)
+                    for q in range(j - i + 1):
+                        deg = int(pages[i + q][1]) % 360
+                        if deg:
+                            pg = out[first + q]
+                            pg.set_rotation((pg.rotation + deg) % 360)
+                    done += j - i + 1
+                    _tick(progress, done, total, f"합치는 중... ({done}/{total}쪽)")
+                    i = j + 1
+            finally:
+                src.close()
+        _tick(progress, total, total, "저장 중...")
+        tmp = dst + ".tmp"
+        try:
+            out.save(tmp, garbage=3, deflate=True)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+        os.replace(tmp, dst)
+    finally:
+        out.close()
+    return total
+
+
+# ──────────────────────────────────────────────────────────────
 # 2. 글자 인식(OCR)
 # ──────────────────────────────────────────────────────────────
 def _tess_candidates():

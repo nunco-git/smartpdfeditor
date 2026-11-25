@@ -861,6 +861,26 @@ for _fmt in ("docx", "xlsx", "hwpx"):
         check("Report title" in _z.read("Contents/section0.xml").decode("utf-8"), "hwpx 본문 글자")
     check(_nt == 1, f"{_fmt} 표 1개 인식")
 
+step("PDF 병합 (같은 파일 중복 · 쪽 순서 자유 · 쪽별 회전)")
+_m = os.path.join(TMP, "병합결과.pdf")
+_n = pdfconv.merge_pdfs([
+    {"path": pdf1, "pages": [(2, 90), (0, 0)]},          # 3쪽(90° 회전) → 1쪽
+    {"path": pdf2, "pages": [(1, 0), (0, 0)]},           # 2쪽 → 1쪽
+    {"path": pdf1, "pages": [(0, 0), (1, 180), (2, 0)]},  # 같은 파일 한 번 더 (2쪽은 180° 더 회전)
+], _m)
+_md = fitz.open(_m)
+check(_n == 7 and len(_md) == 7, f"병합 쪽 수 {len(_md)}")
+check(_md[0].rotation == 90 and "Landscape" in _md[0].get_text(), "첫 쪽: 3쪽이 90° 회전")
+check("Hello" in _md[1].get_text(), "둘째 쪽: 1쪽")
+check("Rotated" in _md[2].get_text() and _md[2].rotation == 0, "셋째 쪽: 다른 파일의 2쪽")
+check("Rotated" in _md[5].get_text() and _md[5].rotation == 270, f"원래 90° + 180° = 270° ({_md[5].rotation})")
+_md.close()
+check(S.parse_pages("3, 1-2, 3", 5, allow_dup=True) == [2, 0, 1, 2], "쪽 지정: 순서·중복 허용")
+check(S.parse_pages("3, 1-2, 3", 5) == [2, 0, 1], "쪽 지정: 기본은 중복 제거")
+_seq = [2, 0, 1, 2, 5, 4, 3]
+check(S.fmt_pages(_seq) == "3, 1-3, 6-4", f"쪽 표시 {S.fmt_pages(_seq)}")
+check(S.parse_pages(S.fmt_pages(_seq), 6, allow_dup=True) == _seq, "쪽 표시 ↔ 입력 되돌리기")
+
 step("종료")
 for t in app.tabs:
     t._dirty = False
