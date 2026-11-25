@@ -250,7 +250,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.24"
+APP_VER = "1.0.25"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -2680,7 +2680,7 @@ class App:
                                              limit=1024 * 1024).decode("utf-8"))
                 tag = str(rel.get("tag_name", "")).lstrip("vV")
                 if tag and not rel.get("draft") and not rel.get("prerelease"):
-                    box["info"] = ({"version": tag, "date": str(rel.get("published_at") or "")[:10],
+                    box["info"] = ({"version": tag, "tag": str(rel.get("tag_name", "")), "date": str(rel.get("published_at") or "")[:10],
                                     "notes": str(rel.get("body") or "")[:3000]}
                                    if ver_tuple(tag) > ver_tuple(APP_VER) else None)
             except Exception:
@@ -2713,6 +2713,71 @@ class App:
         except tk.TclError:
             pass
 
+    def auto_update(self, info, dlg, btn, status):
+        """새 exe 를 내려받아 현재 exe 자리에 덮어쓰기 (모든 창 종료 → 덮어쓰기 → 다시 실행)"""
+        if not getattr(sys, "frozen", False):
+            messagebox.showinfo(APP, "exe 로 실행 중일 때만 자동 업데이트가 됩니다.", parent=dlg)
+            return
+        exe = os.path.abspath(sys.executable)
+        base = os.path.splitext(exe)
+        new = base[0] + "_update" + base[1]
+        if not os.access(os.path.dirname(exe), os.W_OK):
+            messagebox.showwarning(APP, "이 프로그램이 있는 폴더에 쓸 수 없어 자동 업데이트를 못 합니다.\n"
+                                   "[새 버전 내려받기]로 받아 직접 바꿔 주세요.", parent=dlg)
+            return
+        btn.configure(state="disabled")
+        status.set("내려받는 중… (잠시만 기다려 주세요)")
+        tag = info.get("tag") or ("v" + info["version"])
+        url = "https://github.com/nunco-git/smartpdfeditor/releases/download/" + urllib.parse.quote(tag) + "/smartpdfeditor.exe"
+
+        def work():
+            err = None
+            try:
+                data = net_request(url, headers={"User-Agent": f"smartpdfeditor/{APP_VER}"},
+                                   limit=400 * 1024 * 1024, timeout=180)
+                if len(data) < 1024 * 1024 or data[:2] != b"MZ":
+                    raise RuntimeError("내려받은 파일이 올바른 프로그램이 아닙니다.")
+                with open(new, "wb") as f:
+                    f.write(data)
+            except Exception as e:
+                err = str(e) or e.__class__.__name__
+            self.root.after(0, lambda: done(err))
+
+        def drop():
+            try:
+                os.remove(new)
+            except OSError:
+                pass
+
+        def done(err):
+            if err:
+                btn.configure(state="normal")
+                status.set("")
+                messagebox.showerror(APP, f"자동 업데이트에 실패했습니다.\n{err}\n\n[새 버전 내려받기]로 직접 받아 주세요.", parent=dlg)
+                drop()
+                return
+            if not messagebox.askyesno(APP, "새 버전을 받았습니다.\n열려 있는 스마트PDF Editor 창을 모두 닫고 업데이트한 뒤 "
+                                       "자동으로 다시 실행합니다.\n(저장하지 않은 수정이 있으면 먼저 저장 여부를 묻습니다)\n\n지금 진행할까요?",
+                                       parent=dlg):
+                status.set("")
+                btn.configure(state="normal")
+                drop()
+                return
+            for t in list(self.tabs):                  # 저장 확인 (취소하면 업데이트도 취소)
+                if not self.ask_save_tab(t):
+                    status.set("")
+                    btn.configure(state="normal")
+                    drop()
+                    return
+            for t in self.tabs:
+                t._dirty = False
+            if _spawn_exe([new, "--apply-update", exe]):
+                self.on_close()
+            else:
+                btn.configure(state="normal")
+                messagebox.showerror(APP, "업데이트 프로그램을 실행하지 못했습니다.", parent=dlg)
+        threading.Thread(target=work, daemon=True).start()
+
     def show_update(self):
         info = getattr(self, "update_info", None)
         if not info:
@@ -2734,14 +2799,20 @@ class App:
             tx.insert("1.0", notes)
             tx.configure(state="disabled")
             tx.pack(fill="both", expand=True)
-        ttk.Label(f, text="받은 smartpdfeditor.exe 를 지금 쓰는 파일 자리에 바꿔 넣고 다시 실행하세요.\n"
+        ttk.Label(f, text="[⚡ 자동 업데이트] → 열린 창을 모두 닫고, 지금 쓰는 파일 자리에 새 버전을 덮어쓴 뒤 다시 실행합니다.\n"
+                          "직접 하려면 [새 버전 내려받기]로 받은 smartpdfeditor.exe 를 지금 쓰는 파일 자리에 바꿔 넣으세요.\n"
                           "(설정·즐겨찾기·북마크는 그대로 이어집니다)", foreground="#b0412b",
                   justify="left").pack(anchor="w", pady=(8, 0))
+        upd_status = tk.StringVar()
+        ttk.Label(f, textvariable=upd_status, foreground="#2b6cb0").pack(anchor="w")
         bf = ttk.Frame(f)
         bf.pack(fill="x", pady=(10, 0))
         ttk.Button(bf, text="나중에", command=dlg.destroy).pack(side="right")
         ttk.Button(bf, text="새 버전 내려받기", command=lambda: (webbrowser.open(DOWNLOAD_URL), dlg.destroy())).pack(
             side="right", padx=4)
+        ab = ttk.Button(bf, text="⚡ 자동 업데이트")
+        ab.configure(command=lambda: self.auto_update(info, dlg, ab, upd_status))
+        ab.pack(side="right", padx=4)
         dlg.bind("<Escape>", lambda e: dlg.destroy())
 
     # ---------- 사용 통계 ----------
@@ -6916,7 +6987,78 @@ def wall_thumb(name, w=72, h=45):
     return tk.PhotoImage(data=base64.b64encode(pix.tobytes("png")))
 
 
+def _spawn_exe(cmd):
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("_MEIPASS", "_PYI"))}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"           # onefile exe 가 다른 exe 를 띄울 때 필요
+    kw = {"creationflags": 0x00000008 | 0x00000200} if sys.platform == "win32" else {}
+    try:
+        subprocess.Popen(cmd, env=env, close_fds=True, **kw)
+        return True
+    except Exception:
+        return False
+
+
+def apply_update(old_exe):
+    """--apply-update <옛 exe>: 내려받은 새 exe 가 스스로 실행되어 옛 프로그램(모든 창)을 끝내고
+    옛 파일 자리에 덮어쓴 뒤 다시 실행"""
+    me = os.path.abspath(sys.executable)
+    old = os.path.abspath(old_exe)
+    name = os.path.basename(old)
+    if os.path.normcase(me) == os.path.normcase(old):
+        return
+
+    def kill(force):
+        try:
+            subprocess.run(["taskkill", "/T", "/IM", name] + (["/F"] if force else []),
+                           capture_output=True, creationflags=0x08000000, timeout=20)
+        except Exception:
+            pass
+    kill(False)                                     # 먼저 정중히 닫기 요청 (저장 확인 창이 뜰 수 있음)
+    ok, err = False, ""
+    for n in range(120):                            # 최대 약 60초
+        if n == 30:
+            kill(True)                              # 15초 지나도 안 꺼지면 강제 종료
+        try:
+            shutil.copyfile(me, old + ".new")
+            os.replace(old + ".new", old)
+            ok = True
+            break
+        except OSError as e:
+            err = str(e)
+            time.sleep(0.5)
+    if not ok:
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, f"업데이트하지 못했습니다.\n{err}\n\n새 파일: {me}\n옛 파일 자리에 직접 덮어써 주세요.",
+                                             APP, 0x10)
+        except Exception:
+            pass
+        return
+    _spawn_exe([old, "--updated"])
+
+
+def cleanup_update_file():
+    """지난 업데이트 때 남은 임시 실행 파일 지우기"""
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        base = os.path.splitext(os.path.abspath(sys.executable))
+        for f in (base[0] + "_update" + base[1], sys.executable + ".new"):
+            if os.path.exists(f):
+                os.remove(f)
+    except OSError:
+        pass
+
+
 def main():
+    args0 = sys.argv[1:]
+    if "--apply-update" in args0:
+        try:
+            apply_update(args0[args0.index("--apply-update") + 1])
+        except Exception:
+            pass
+        return
+    cleanup_update_file()
     if sys.platform == "win32":
         try:   # 작업표시줄에서 python 이 아닌 '스마트PDF Editor' 로 따로 묶이고 아이콘이 보이게
             import ctypes
