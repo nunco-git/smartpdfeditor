@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.27"
+APP_VER = "1.0.28"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -6725,61 +6725,198 @@ class App:
             messagebox.showinfo(APP, f"{text}\n\n{p}")
 
     def merge_dialog(self):
-        """여러 PDF 합치기: 파일 목록(같은 파일 중복 가능·순서 조정) + 파일별 가져올 쪽(순서 자유) + 쪽별 회전"""
+        """여러 PDF 합치기. 왼쪽: 합칠 파일 목록(같은 파일 중복·순서 조정·가져올 쪽 지정) / 오른쪽: 고른 파일의 쪽 미리보기(회전·쪽 순서)"""
         import pdfconv
-        ents = []                      # 항목: {"name","path","data","doc","pages":[[원본쪽, 회전], ...]}
+        ents = []                      # 항목: {"name","path","data","doc","password","pages":[[원본쪽, 회전], ...]}
         dlg = Popup(self.root)
         dlg.title("PDF 병합")
         dlg.transient(self.root)
-        dlg.minsize(780, 600)
-        dlg.size_hint = (900, 640)
-        shown = {"i": None}            # 아래 쪽 목록이 지금 보여주는 파일 (같으면 다시 그리지 않아 쪽 선택이 유지됨)
-        top = ttk.Frame(dlg, padding=(10, 10, 10, 0))
-        top.pack(fill="x")
-        mid = ttk.Frame(dlg, padding=(10, 6, 10, 0))
-        mid.pack(fill="x")
-        bot = ttk.Frame(dlg, padding=(10, 8, 10, 10))
+        dlg.minsize(940, 580)
+        dlg.size_hint = (1180, 730)
+        shown = {"i": None}            # 오른쪽이 지금 보여주는 파일 (같으면 다시 그리지 않아 선택·스크롤이 유지됨)
+        sel = set()                    # 오른쪽에서 고른 쪽 (이 파일 안에서의 순번, 0부터)
+        st = {"anchor": None, "cols": 1, "cw": 168, "ch": 250, "th": 213, "tw": 150, "fill": None}
+        thumbs = {}                    # (문서, 쪽, 회전, 크기) → 그림
+        on_cv = {}                     # 지금 화면에 올려 둔 그림 (순번 → 그림)
+
+        bot = ttk.Frame(dlg, padding=(10, 6, 10, 10))
         bot.pack(side="bottom", fill="x")
-        pgf = ttk.LabelFrame(dlg, text=" 쪽 순서·회전 (위 목록에서 고른 파일) ", padding=8)
-        pgf.pack(fill="both", expand=True, padx=10, pady=(8, 0))
+        pw = ttk.PanedWindow(dlg, orient="horizontal")
+        pw.pack(fill="both", expand=True, padx=10, pady=(10, 0))
+        left = ttk.Frame(pw, width=400)
+        left.pack_propagate(False)
+        right = ttk.Frame(pw)
+        pw.add(left, weight=0)
+        pw.add(right, weight=1)
 
-        # ── 파일 목록
-        cols = ("no", "name", "total", "spec", "rot")
-        ft = ttk.Treeview(mid, columns=cols, show="headings", height=7, selectmode="browse")
-        for c, t, w, a in (("no", "순서", 44, "center"), ("name", "파일", 330, "w"), ("total", "전체 쪽", 66, "center"),
-                           ("spec", "가져올 쪽", 220, "w"), ("rot", "회전한 쪽", 80, "center")):
+        # ───────── 왼쪽: 파일 목록
+        ttk.Label(left, text="합칠 파일 (위에서 아래 순서로 합쳐집니다)", font=("맑은 고딕", 9, "bold")).pack(anchor="w")
+        bt = ttk.Frame(left)
+        bt.pack(fill="x", pady=(4, 4))
+        spf = ttk.LabelFrame(left, text=" 이 파일에서 가져올 쪽 ", padding=6)
+        spf.pack(side="bottom", fill="x", pady=(6, 0))
+        tf = ttk.Frame(left)
+        tf.pack(fill="both", expand=True)
+        ft = ttk.Treeview(tf, columns=("no", "name", "cnt"), show="headings", selectmode="browse")
+        for c, t, w, a, stt in (("no", "순서", 40, "center", False), ("name", "파일", 220, "w", True),
+                                ("cnt", "가져올 쪽", 100, "center", False)):
             ft.heading(c, text=t)
-            ft.column(c, width=w, anchor=a, stretch=(c == "name"))
-        fsb = ttk.Scrollbar(mid, orient="vertical", command=ft.yview)
+            ft.column(c, width=w, anchor=a, stretch=stt)
+        fsb = ttk.Scrollbar(tf, orient="vertical", command=ft.yview)
         ft.configure(yscrollcommand=fsb.set)
-        ft.pack(side="left", fill="x", expand=True)
+        ft.pack(side="left", fill="both", expand=True)
         fsb.pack(side="left", fill="y")
-
-        # ── 쪽 목록 + 회전 버튼 + 미리보기
-        pt = ttk.Treeview(pgf, columns=("no", "src", "rot"), show="headings", height=9, selectmode="extended")
-        for c, t, w in (("no", "합본 순서", 70), ("src", "원본 쪽", 70), ("rot", "회전", 70)):
-            pt.heading(c, text=t)
-            pt.column(c, width=w, anchor="center", stretch=False)
-        psb = ttk.Scrollbar(pgf, orient="vertical", command=pt.yview)
-        pt.configure(yscrollcommand=psb.set)
-        pt.pack(side="left", fill="y")
-        psb.pack(side="left", fill="y")
-        ctl = ttk.Frame(pgf, padding=(10, 0))
-        ctl.pack(side="left", fill="y")
-        prev = tk.Canvas(pgf, width=230, height=290, bg="#e9e9e9", highlightthickness=1, highlightbackground="#bbb")
-        prev.pack(side="right", padx=(6, 0))
-        pv = {"img": None}
 
         spec_v = tk.StringVar()
         sum_v = tk.StringVar()
-        hint = ttk.Label(mid, text="", foreground="#666")
+        se = ttk.Entry(spf, textvariable=spec_v)
+        se.pack(fill="x")
+        sb = ttk.Frame(spf)
+        sb.pack(fill="x", pady=(4, 0))
+        ttk.Label(spf, text="예) 3, 1-2, 7-5   순서 마음대로 · 7-5처럼 거꾸로 · 같은 쪽 여러 번 가능\n비워 두고 [적용] = 전체 쪽",
+                  foreground="#666", justify="left").pack(anchor="w", pady=(4, 0))
+
+        # ───────── 오른쪽: 쪽 미리보기
+        head_v = tk.StringVar(value="")
+        ttk.Label(right, textvariable=head_v, font=("맑은 고딕", 9, "bold")).pack(anchor="w")
+        tb = ttk.Frame(right)
+        tb.pack(fill="x", pady=(4, 4))
+        cvf = ttk.Frame(right)
+        cvf.pack(fill="both", expand=True)
+        tc = tk.Canvas(cvf, bg="#e4e7ec", highlightthickness=1, highlightbackground="#b8bcc4")
+        vsb = ttk.Scrollbar(cvf, orient="vertical", command=tc.yview)
+        tc.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="left", fill="y")
+        ttk.Label(right, text="쪽을 눌러 고르세요 (Ctrl·Shift로 여러 쪽) · 두 번 누르면 크게 보기 · 위 버튼으로 회전·순서 바꾸기",
+                  foreground="#666").pack(anchor="w", pady=(4, 0))
 
         def cur():
-            sel = ft.selection()
-            return int(sel[0]) if sel else None
+            sel_ = ft.selection()
+            return int(sel_[0]) if sel_ else None
 
-        def rot_text(d):
-            return "—" if not d else f"{d}°"
+        def cap(k, p, d):
+            return f"{k + 1}번째 (원본 {p + 1}쪽)" + (f"\n{d}° 회전" if d else "")
+
+        # ── 썸네일 그리기 (보이는 쪽만 그림 → 쪽이 많아도 빠름)
+        def render(i, k, bw, bh):
+            e = ents[i]
+            p, d = e["pages"][k]
+            pg = e["doc"][p]
+            orig = pg.rotation
+            pg.set_rotation((orig + d) % 360)
+            try:
+                r = pg.rect
+                z = min(bw / max(1, r.width), bh / max(1, r.height))
+                return page_photo(pg, z)
+            finally:
+                pg.set_rotation(orig)
+
+        def thumb(i, k):
+            e = ents[i]
+            p, d = e["pages"][k]
+            key = (id(e["doc"]), p, d, st["tw"])
+            img = thumbs.get(key)
+            if img is None:
+                if len(thumbs) > 500:
+                    thumbs.clear()
+                img = thumbs[key] = render(i, k, st["tw"], st["th"])
+            return img
+
+        def sched_fill():
+            if st["fill"] is None:
+                st["fill"] = dlg.after(15, fill_visible)
+
+        def fill_visible():
+            st["fill"] = None
+            i = cur()
+            if i is None or not dlg.winfo_exists():
+                return
+            pgs = ents[i]["pages"]
+            cols, cw, chh, th = st["cols"], st["cw"], st["ch"], st["th"]
+            y0 = tc.canvasy(0)
+            y1 = y0 + max(1, tc.winfo_height())
+            r0 = max(0, int(y0 // chh) - 1)
+            r1 = int(y1 // chh) + 1
+            n = 0
+            for k in range(r0 * cols, min(len(pgs), (r1 + 1) * cols)):
+                if k in on_cv:
+                    continue
+                try:
+                    img = thumb(i, k)
+                except Exception:
+                    img = None
+                r, c = divmod(k, cols)
+                cx, cy = c * cw + cw / 2, r * chh + 6 + th / 2
+                if img is not None:
+                    w_, h_ = img.width(), img.height()
+                    tc.create_rectangle(cx - w_ / 2 - 1, cy - h_ / 2 - 1, cx + w_ / 2, cy + h_ / 2, outline="#8a8f98",
+                                        tags=(f"th{k}",))
+                    tc.create_image(cx, cy, image=img, tags=(f"th{k}",))
+                    on_cv[k] = img
+                else:
+                    tc.create_text(cx, cy, text="미리보기 실패", fill="#a00", tags=(f"th{k}",))
+                    on_cv[k] = None
+                n += 1
+                if n >= 8:                                   # 한꺼번에 너무 많이 그리면 멈춘 듯 보임 → 나눠서
+                    sched_fill()
+                    break
+
+        def sel_view():
+            i = cur()
+            if i is None:
+                return
+            for k in range(len(ents[i]["pages"])):
+                on = k in sel
+                tc.itemconfigure(f"cell{k}", fill="#b9d4f5" if on else "#e4e7ec", outline="#2b6cb0" if on else "")
+            n = len(sel)
+            head_v.set(f"{ents[i]['name']}  ·  가져올 {len(ents[i]['pages'])}쪽 (원본 {len(ents[i]['doc'])}쪽)"
+                       + (f"  ·  {n}쪽 선택됨" if n else ""))
+
+        def relayout(keep=False):
+            """오른쪽 쪽 미리보기를 다시 배치"""
+            frac = tc.yview()[0] if keep else 0.0
+            tc.delete("all")
+            on_cv.clear()
+            i = cur()
+            shown["i"] = i
+            if i is None:
+                head_v.set("")
+                tc.configure(scrollregion=(0, 0, 1, 1))
+                tc.create_text(max(60, tc.winfo_width() // 2), 120, fill="#667",
+                               text="왼쪽에서 [➕ 파일 추가]로 PDF를 넣고\n파일을 고르면 여기에 쪽 미리보기가 보입니다.", justify="center")
+                return
+            pgs = ents[i]["pages"]
+            tw = st["tw"]
+            th = int(tw * 1.42)
+            cw, chh = tw + 22, th + 46
+            cols = max(1, max(tc.winfo_width(), cw) // cw)
+            st.update(cols=cols, cw=cw, ch=chh, th=th)
+            rows = (len(pgs) + cols - 1) // cols
+            total_h = rows * chh + 8
+            tc.configure(scrollregion=(0, 0, cols * cw, total_h))
+            for k, (p, d) in enumerate(pgs):
+                r, c = divmod(k, cols)
+                x, y = c * cw, r * chh
+                tc.create_rectangle(x + 3, y + 3, x + cw - 3, y + chh - 3, fill="#e4e7ec", outline="", width=2,
+                                    tags=(f"cell{k}",))
+                tc.create_text(x + cw / 2, y + chh - 20, text=cap(k, p, d), font=("맑은 고딕", 8), justify="center",
+                               fill="#333", tags=(f"cap{k}",))
+            sel_view()
+            tc.yview_moveto(frac)
+            fill_visible()
+
+        def refresh_cells(ks):
+            i = cur()
+            if i is None:
+                return
+            for k in ks:
+                if k >= len(ents[i]["pages"]):
+                    continue
+                tc.delete(f"th{k}")
+                on_cv.pop(k, None)
+                p, d = ents[i]["pages"][k]
+                tc.itemconfigure(f"cap{k}", text=cap(k, p, d))
+            fill_visible()
 
         def refresh_files(select=None):
             ft.delete(*ft.get_children())
@@ -6788,60 +6925,28 @@ class App:
                 allp = pgs == list(range(len(e["doc"])))
                 nrot = sum(1 for _, d in e["pages"] if d)
                 ft.insert("", "end", iid=str(i), values=(
-                    i + 1, e["name"], len(e["doc"]), "전체" if allp else f"{fmt_pages(pgs) or '(없음)'}  ({len(pgs)}쪽)",
-                    f"{nrot}쪽" if nrot else "—"))
+                    i + 1, e["name"], ("전체 " if allp else "") + f"{len(pgs)}/{len(e['doc'])}쪽" + (" ⟳" if nrot else "")))
             if select is not None and 0 <= select < len(ents):
                 ft.selection_set(str(select))
                 ft.see(str(select))
-            refresh_pages()
+            if select != shown["i"] or select is None:
+                sel.clear()
+                st["anchor"] = None
+            spec_sync()
+            relayout(keep=(select is not None and select == shown["i"]))
             tp = sum(len(e["pages"]) for e in ents)
-            sum_v.set(f"파일 {len(ents)}개 · 합친 뒤 총 {tp}쪽" if ents else "위의 [➕ 파일 추가]로 합칠 PDF를 넣어주세요.")
+            sum_v.set(f"파일 {len(ents)}개 · 합친 뒤 총 {tp}쪽" if ents else "왼쪽 위 [➕ 파일 추가]로 합칠 PDF를 넣어주세요.")
 
-        def refresh_pages(select=None):
-            pt.delete(*pt.get_children())
+        def spec_sync():
             i = cur()
-            shown["i"] = i
             if i is None:
                 spec_v.set("")
-                draw_preview(None)
                 return
             e = ents[i]
             pgs = [p for p, _ in e["pages"]]
             spec_v.set("" if pgs == list(range(len(e["doc"]))) else fmt_pages(pgs))
-            for k, (p, d) in enumerate(e["pages"]):
-                pt.insert("", "end", iid=str(k), values=(k + 1, f"{p + 1}쪽", rot_text(d)))
-            if select:
-                keep = [str(k) for k in select if 0 <= k < len(e["pages"])]
-                if keep:
-                    pt.selection_set(keep)
-                    pt.see(keep[0])
-            draw_preview(None)
 
-        def draw_preview(_=None):
-            prev.delete("all")
-            pv["img"] = None
-            i = cur()
-            sel = pt.selection()
-            if i is None or not sel:
-                prev.create_text(115, 145, text="쪽을 고르면\n미리보기가 보입니다", fill="#777", justify="center")
-                return
-            p, d = ents[i]["pages"][int(sel[0])]
-            try:
-                pg = ents[i]["doc"][p]
-                orig = pg.rotation
-                pg.set_rotation((orig + d) % 360)
-                try:
-                    r = pg.rect
-                    z = min(220 / max(1, r.width), 280 / max(1, r.height))
-                    img = page_photo(pg, z)
-                finally:
-                    pg.set_rotation(orig)
-                pv["img"] = img
-                prev.create_image(115, 145, image=img)
-            except Exception:
-                prev.create_text(115, 145, text="미리보기를 만들 수 없습니다", fill="#a00")
-
-        # ── 파일 추가
+        # ── 파일 추가·순서
         def add_entry(name, path, data, doc, password=None):
             if len(doc) == 0:
                 doc.close()
@@ -6851,23 +6956,30 @@ class App:
                          "pages": [[k, 0] for k in range(len(doc))]})
             return len(ents) - 1
 
+        def regrab():
+            try:
+                dlg.grab_set()
+            except tk.TclError:
+                pass
+
         def add_files():
-            init = os.path.dirname(self.path) if self.path else (self.conf.get("last_dir") or "")
+            init = os.path.dirname(self.path) if self.path else ""
             ps = filedialog.askopenfilenames(parent=dlg, title="합칠 PDF 고르기 (여러 개 선택 가능)",
                                              filetypes=[("PDF", "*.pdf"), ("모든 파일", "*.*")],
                                              initialdir=init if init and os.path.isdir(init) else None)
             last = None
             for p in ps:
                 try:
-                    d, pw = open_pdf_ask(p, os.path.basename(p), dlg)      # 암호가 걸려 있으면 입력창
+                    d, pw_ = open_pdf_ask(p, os.path.basename(p), dlg)      # 암호가 걸려 있으면 입력창
                 except Exception as ex:
                     messagebox.showwarning(APP, f"{os.path.basename(p)}\n\n열 수 없습니다:\n{ex}", parent=dlg)
                     continue
                 if d is None:                                               # 암호 입력을 취소하거나 3번 틀림 → 이 파일은 건너뜀
                     continue
-                k = add_entry(os.path.basename(p), p, None, d, pw)
+                k = add_entry(os.path.basename(p), p, None, d, pw_)
                 if k is not None:
                     last = k
+            regrab()
             if last is not None:
                 refresh_files(last)
 
@@ -6903,8 +7015,7 @@ class App:
             if i is None:
                 return
             e = ents[i]
-            ne = dict(e, pages=[list(x) for x in e["pages"]])        # 같은 PDF를 한 번 더 (쪽·회전도 그대로 복사)
-            ents.insert(i + 1, ne)
+            ents.insert(i + 1, dict(e, pages=[list(x) for x in e["pages"]]))      # 같은 PDF를 한 번 더 (쪽·회전도 그대로 복사)
             refresh_files(i + 1)
 
         def remove():
@@ -6912,6 +7023,7 @@ class App:
             if i is None:
                 return
             ents.pop(i)
+            shown["i"] = None
             refresh_files(min(i, len(ents) - 1) if ents else None)
 
         def move(delta):
@@ -6919,6 +7031,7 @@ class App:
             if i is None or not 0 <= i + delta < len(ents):
                 return
             ents[i], ents[i + delta] = ents[i + delta], ents[i]
+            shown["i"] = i + delta
             refresh_files(i + delta)
 
         # ── 가져올 쪽 (글로 입력)
@@ -6938,99 +7051,180 @@ class App:
             for p, d in e["pages"]:
                 old.setdefault(p, d)                     # 전에 정해 둔 회전은 같은 쪽에 그대로 이어줌
             e["pages"] = [[p, old.get(p, 0)] for p in pgs]
+            sel.clear()
             refresh_files(i)
 
         def all_pages():
+            spec_v.set("")
+            apply_spec()
+
+        # ── 쪽 선택·회전·순서 (오른쪽)
+        def on_click(ev):
+            tc.focus_set()
             i = cur()
             if i is None:
                 return
-            e = ents[i]
-            old = {}
-            for p, d in e["pages"]:
-                old.setdefault(p, d)
-            e["pages"] = [[p, old.get(p, 0)] for p in range(len(e["doc"]))]
-            refresh_files(i)
+            x, y = tc.canvasx(ev.x), tc.canvasy(ev.y)
+            c, r = int(x // st["cw"]), int(y // st["ch"])
+            k = r * st["cols"] + c if 0 <= x and 0 <= y and c < st["cols"] else -1
+            if not 0 <= k < len(ents[i]["pages"]):
+                if not (ev.state & 0x5):
+                    sel.clear()
+                    sel_view()
+                return
+            ctrl, shift = ev.state & 0x4, ev.state & 0x1
+            if shift and st["anchor"] is not None:
+                a, b = sorted((st["anchor"], k))
+                if not ctrl:
+                    sel.clear()
+                sel.update(range(a, b + 1))
+            elif ctrl:
+                sel.symmetric_difference_update({k})
+                st["anchor"] = k
+            else:
+                sel.clear()
+                sel.add(k)
+                st["anchor"] = k
+            sel_view()
 
-        # ── 쪽 회전·순서
-        def sel_pages():
-            return sorted(int(s) for s in pt.selection())
+        def on_dbl(ev):
+            i = cur()
+            if i is None:
+                return
+            x, y = tc.canvasx(ev.x), tc.canvasy(ev.y)
+            c, r = int(x // st["cw"]), int(y // st["ch"])
+            k = r * st["cols"] + c if 0 <= x and 0 <= y and c < st["cols"] else -1
+            if 0 <= k < len(ents[i]["pages"]):
+                big_view(i, k)
+
+        def big_view(i, k):
+            bw = Popup(dlg)
+            p, d = ents[i]["pages"][k]
+            bw.title(f"{ents[i]['name']} — 원본 {p + 1}쪽" + (f" ({d}° 회전)" if d else ""))
+            bw.transient(dlg)
+            sh = max(400, bw.winfo_screenheight() - 200)
+            try:
+                img = render(i, k, min(900, bw.winfo_screenwidth() - 100), sh)
+            except Exception as ex:
+                bw.destroy()
+                messagebox.showwarning(APP, f"미리보기를 만들 수 없습니다:\n{ex}", parent=dlg)
+                return
+            lab = tk.Label(bw, image=img, cursor="hand2")
+            lab.image = img
+            lab.pack()
+            ttk.Label(bw, text="아무 곳이나 누르거나 Esc를 누르면 닫힙니다", foreground="#666").pack(pady=2)
+            for w_ in (bw, lab):
+                w_.bind("<Button-1>", lambda e: bw.destroy())
+            bw.bind("<Escape>", lambda e: bw.destroy())
+            bw.bind("<Destroy>", lambda e: e.widget is bw and dlg.after(10, regrab))
+            bw.grab_set()
 
         def rotate(delta):
             i = cur()
-            sel = sel_pages()
             if i is None or not sel:
-                messagebox.showinfo(APP, "회전할 쪽을 아래 목록에서 먼저 골라주세요.\n(Ctrl·Shift로 여러 쪽 선택, Ctrl+A 전체 선택)", parent=dlg)
+                messagebox.showinfo(APP, "회전할 쪽을 오른쪽 미리보기에서 먼저 눌러 골라주세요.\n(Ctrl·Shift로 여러 쪽 선택, 전체 선택 버튼도 있습니다)", parent=dlg)
                 return
             for k in sel:
                 pgd = ents[i]["pages"][k]
                 pgd[1] = 0 if delta is None else (pgd[1] + delta) % 360
+            refresh_cells(list(sel))
             refresh_files(i)
-            refresh_pages(sel)
-            pt.selection_set([str(k) for k in sel])
-            draw_preview()
 
         def move_pages(delta):
             i = cur()
-            sel = sel_pages()
             if i is None or not sel:
                 return
             pgs = ents[i]["pages"]
+            ks = sorted(sel)
             if delta < 0:
-                if sel[0] == 0:
+                if ks[0] == 0:
                     return
-                for k in sel:
+                for k in ks:
                     pgs[k - 1], pgs[k] = pgs[k], pgs[k - 1]
-                new = [k - 1 for k in sel]
             else:
-                if sel[-1] == len(pgs) - 1:
+                if ks[-1] == len(pgs) - 1:
                     return
-                for k in reversed(sel):
+                for k in reversed(ks):
                     pgs[k + 1], pgs[k] = pgs[k], pgs[k + 1]
-                new = [k + 1 for k in sel]
+            new = {k + delta for k in ks}
+            sel.clear()
+            sel.update(new)
+            st["anchor"] = min(new)
             refresh_files(i)
-            refresh_pages(new)
-            pt.selection_set([str(k) for k in new])
-            draw_preview()
+            first = min(new)
+            top, bot_ = tc.canvasy(0), tc.canvasy(tc.winfo_height())
+            ry = (first // st["cols"]) * st["ch"]
+            if ry < top or ry + st["ch"] > bot_:
+                tc.yview_moveto(max(0.0, (ry - 10) / max(1, float(tc.cget("scrollregion").split()[3]))))
+                fill_visible()
 
         def drop_pages():
             i = cur()
-            sel = sel_pages()
             if i is None or not sel:
                 return
             if len(sel) >= len(ents[i]["pages"]):
-                messagebox.showinfo(APP, "모든 쪽을 뺄 수는 없습니다.\n이 파일을 통째로 빼려면 위 목록의 [✖ 파일 빼기]를 누르세요.", parent=dlg)
+                messagebox.showinfo(APP, "모든 쪽을 뺄 수는 없습니다.\n이 파일을 통째로 빼려면 왼쪽의 [✖ 파일 빼기]를 누르세요.", parent=dlg)
                 return
-            ents[i]["pages"] = [x for k, x in enumerate(ents[i]["pages"]) if k not in set(sel)]
+            ents[i]["pages"] = [x for k, x in enumerate(ents[i]["pages"]) if k not in sel]
+            sel.clear()
             refresh_files(i)
 
-        # ── 버튼 배치
-        for txt, cmd in (("➕ 파일 추가...", add_files), ("📄 열린 문서 추가", add_open), ("⧉ 같은 파일 한 번 더", dup),
-                         ("▲ 위로", lambda: move(-1)), ("▼ 아래로", lambda: move(+1)), ("✖ 파일 빼기", remove)):
-            ttk.Button(top, text=txt, command=cmd).pack(side="left", padx=(0, 4))
-        ttk.Label(top, text="같은 파일을 여러 번 넣어도 됩니다", foreground="#666").pack(side="left", padx=8)
+        def sel_all():
+            i = cur()
+            if i is None:
+                return
+            sel.clear()
+            sel.update(range(len(ents[i]["pages"])))
+            sel_view()
 
-        sp = ttk.Frame(dlg, padding=(10, 6, 10, 0))
-        sp.pack(fill="x", after=mid)
-        ttk.Label(sp, text="가져올 쪽").pack(side="left")
-        se = ttk.Entry(sp, textvariable=spec_v, width=34)
-        se.pack(side="left", padx=6)
-        ttk.Button(sp, text="적용", command=apply_spec).pack(side="left")
-        ttk.Button(sp, text="전체 쪽", command=all_pages).pack(side="left", padx=4)
-        ttk.Label(sp, text="예) 3, 1-2, 7-5   (순서 마음대로 · 거꾸로 7-5 · 같은 쪽 여러 번 가능 · 비우면 전체)",
-                  foreground="#666").pack(side="left", padx=6)
+        # ── 버튼 배치
+        for r_, row in enumerate(((("➕ 파일 추가...", add_files), ("📄 열린 문서 추가", add_open)),
+                                  (("⧉ 한 번 더", dup), ("▲ 위로", lambda: move(-1)), ("▼ 아래로", lambda: move(+1)),
+                                   ("✖ 빼기", remove)))):
+            for c_, (txt, cmd) in enumerate(row):
+                span = 2 if len(row) == 2 else 1
+                ttk.Button(bt, text=txt, command=cmd).grid(row=r_, column=c_ * span, columnspan=span, sticky="ew",
+                                                           padx=1, pady=1)
+        for c_ in range(4):
+            bt.columnconfigure(c_, weight=1)
+        ttk.Button(sb, text="적용", command=apply_spec).pack(side="left")
+        ttk.Button(sb, text="전체 쪽", command=all_pages).pack(side="left", padx=4)
         se.bind("<Return>", apply_spec)
 
-        for txt, cmd in (("⟲ 왼쪽으로 90°", lambda: rotate(-90)), ("⟳ 오른쪽으로 90°", lambda: rotate(90)),
-                         ("↻ 180° 돌리기", lambda: rotate(180)), ("회전 없애기", lambda: rotate(None)),
-                         ("▲ 쪽 위로", lambda: move_pages(-1)), ("▼ 쪽 아래로", lambda: move_pages(+1)),
-                         ("✖ 쪽 빼기", drop_pages)):
-            ttk.Button(ctl, text=txt, command=cmd, width=16).pack(pady=2)
-        ttk.Label(ctl, text="쪽을 골라 누르세요\n(여러 쪽 선택 가능)", foreground="#666", justify="left").pack(pady=(10, 0))
+        for txt, cmd in (("⟲ 왼쪽 90°", lambda: rotate(-90)), ("⟳ 오른쪽 90°", lambda: rotate(90)),
+                         ("↻ 180°", lambda: rotate(180)), ("회전 없애기", lambda: rotate(None))):
+            ttk.Button(tb, text=txt, command=cmd).pack(side="left", padx=(0, 3))
+        ttk.Separator(tb, orient="vertical").pack(side="left", fill="y", padx=4)
+        for txt, cmd in (("▲ 쪽 앞으로", lambda: move_pages(-1)), ("▼ 쪽 뒤로", lambda: move_pages(+1)),
+                         ("✖ 쪽 빼기", drop_pages), ("전체 선택", sel_all)):
+            ttk.Button(tb, text=txt, command=cmd).pack(side="left", padx=(0, 3))
+        size_v = tk.StringVar(value="보통")
+        szc = ttk.Combobox(tb, textvariable=size_v, values=("작게", "보통", "크게"), width=5, state="readonly")
+        szc.pack(side="right")
+        ttk.Label(tb, text="미리보기 크기").pack(side="right", padx=(0, 4))
 
-        ft.bind("<<TreeviewSelect>>", lambda e: refresh_pages() if cur() != shown["i"] else None)
-        pt.bind("<<TreeviewSelect>>", draw_preview)
+        def on_size(_=None):
+            st["tw"] = {"작게": 100, "보통": 150, "크게": 220}[size_v.get()]
+            relayout(keep=True)
+        szc.bind("<<ComboboxSelected>>", on_size)
+
+        def on_cfg(_=None):
+            i = cur()
+            if i is None:
+                return
+            cols = max(1, max(tc.winfo_width(), st["cw"]) // st["cw"])
+            if cols != st["cols"]:
+                relayout(keep=True)
+            else:
+                sched_fill()
+        tc.bind("<Configure>", on_cfg)
+        tc.bind("<Button-1>", on_click)
+        tc.bind("<Double-Button-1>", on_dbl)
+        tc.bind("<Control-a>", lambda e: (sel_all(), "break")[1])
+        tc.bind("<Delete>", lambda e: drop_pages())
+        tc.configure(yscrollcommand=lambda a, b: (vsb.set(a, b), sched_fill()))
+        ft.bind("<<TreeviewSelect>>", lambda e: (sel.clear(), spec_sync(), relayout()) if cur() != shown["i"] else None)
         ft.bind("<Delete>", lambda e: remove())
-        pt.bind("<Control-a>", lambda e: (pt.selection_set(pt.get_children()), "break")[1])
 
         go = {"v": False}
 
@@ -7047,9 +7241,16 @@ class App:
         refresh_files()
         dlg.grab_set()
         dlg.wait_window()
+        if st["fill"] is not None:
+            try:
+                dlg.after_cancel(st["fill"])
+            except Exception:
+                pass
 
         snap = [{"name": e["name"], "path": e["path"], "data": e["data"], "password": e["password"],
                  "pages": [tuple(x) for x in e["pages"]]} for e in ents]
+        thumbs.clear()
+        on_cv.clear()
         for d in {id(e["doc"]): e["doc"] for e in ents}.values():      # 같은 PDF를 여러 번 넣었어도 한 번만 닫음
             try:
                 d.close()
