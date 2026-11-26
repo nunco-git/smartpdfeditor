@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.29"
+APP_VER = "1.0.30"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -3259,14 +3259,17 @@ class App:
             self.labeled.append(rb)
         # 도구 옵션(펼침메뉴 등)은 이 바로가기 왼쪽에 보임: 병합 · 용량 줄이기 · 문서(워드·엑셀·한글) 변환 · 그림 변환
         self.quick = ttk.Frame(self.toolarea)
-        ttk.Separator(self.quick, orient="vertical").pack(side="left", fill="y", padx=4)
-        for txt, cmd, tip in (("🔗 병합", self.merge_dialog, "PDF 병합 — 여러 PDF(같은 파일도 가능)를 쪽 선택·회전·순서를 정해 하나로 합치기"),
-                              ("📉 용량줄이기", self.shrink_dialog, "PDF 용량 줄이기 — 사진·스캔 그림을 줄여 새 파일로 저장"),
-                              ("📄 문서변환", self.export_dialog, "워드·엑셀·한글 문서로 내보내기"),
-                              ("🖼 그림변환", self.images_dialog, "쪽을 그림 파일(PNG·JPG)로 저장")):
-            qb = ttk.Button(self.quick, text=txt, style="Toolbutton", command=cmd)
+        ttk.Separator(self.quick, orient="vertical").pack(side="left", fill="y", padx=3)
+        ttk.Style().configure("Quick.Toolbutton", padding=(3, 3))       # 한 줄에 다 들어가게 좁은 버튼
+        self.quick_btns = []                                             # (버튼, 글자까지 보일 때, 아이콘만 보일 때)
+        for ic, short_, tip, cmd in (("🔗", "병합", "PDF 병합 — 여러 PDF(같은 파일도 가능)를 쪽 선택·회전·순서를 정해 하나로 합치기", self.merge_dialog),
+                                     ("📉", "용량", "PDF 용량 줄이기 — 사진·스캔 그림을 줄여 새 파일로 저장", self.shrink_dialog),
+                                     ("📄", "문서", "문서 변환 — 워드·엑셀·한글 문서로 내보내기", self.export_dialog),
+                                     ("🖼", "그림", "그림 변환 — 쪽을 그림 파일(PNG·JPG)로 저장", self.images_dialog)):
+            qb = ttk.Button(self.quick, text=f"{ic} {short_}", style="Quick.Toolbutton", width=-1, command=cmd)
             qb.pack(side="left", padx=0)
             Tooltip(qb, tip)
+            self.quick_btns.append((qb, f"{ic} {short_}", ic))
         self.optbox = ttk.Frame(self.toolarea)
         self.opt = {k: ttk.Frame(self.optbox) for k, _ in TOOLS}
 
@@ -5558,6 +5561,11 @@ class App:
         for w in self.labeled:
             try:
                 w.configure(compound="image" if on else "left")
+            except tk.TclError:
+                pass
+        for qb, full, icon in self.quick_btns:                 # 병합·용량·문서·그림 버튼도 좁으면 아이콘만
+            try:
+                qb.configure(text=icon if on else full)
             except tk.TclError:
                 pass
 
