@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.28"
+APP_VER = "1.0.29"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -1280,6 +1280,115 @@ def print_pages(hdc, doc, pages, title="스마트PDF Editor", output=None, progr
 
 # ───────────────────────── 바로가기 (바탕화면·작업표시줄) ─────────────────────────
 SHORTCUT_NAME = "스마트PDF Editor.lnk"
+
+
+def expand_pdf_paths(paths):
+    """끌어다 놓은 경로 목록 → (PDF 파일 목록, 건너뛴 개수). 폴더는 그 안의 PDF를 이름순으로 넣음"""
+    out, skipped = [], 0
+    for p in paths:
+        if os.path.isdir(p):
+            try:
+                names = sorted(os.listdir(p), key=lambda n: n.lower())
+            except OSError:
+                skipped += 1
+                continue
+            sub = [os.path.join(p, n) for n in names if n.lower().endswith(".pdf") and os.path.isfile(os.path.join(p, n))]
+            out.extend(sub)
+            if not sub:
+                skipped += 1
+        elif p.lower().endswith(".pdf") and os.path.isfile(p):
+            out.append(p)
+        else:
+            skipped += 1
+    return out, skipped
+
+
+def read_dropped_files(shell32, hdrop):
+    """WM_DROPFILES 의 hdrop → 경로 목록 (shell32: DragQueryFileW·DragFinish 를 가진 객체)"""
+    import ctypes
+    paths = []
+    try:
+        n = shell32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
+        for k in range(n):
+            ln = shell32.DragQueryFileW(hdrop, k, None, 0)
+            buf = ctypes.create_unicode_buffer(ln + 1)
+            shell32.DragQueryFileW(hdrop, k, buf, ln + 1)
+            paths.append(buf.value)
+    finally:
+        try:
+            shell32.DragFinish(hdrop)
+        except Exception:
+            pass
+    return paths
+
+
+def enable_file_drop(widget, callback):
+    """Windows: widget(최상위 창)에 파일·폴더를 끌어다 놓으면 callback(경로 목록)을 부름. 켜졌으면 True, 안 되면 False(조용히)"""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u32, s32 = ctypes.windll.user32, ctypes.windll.shell32
+        LRESULT = ctypes.c_ssize_t
+        WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+        setl = getattr(u32, "SetWindowLongPtrW", None) or u32.SetWindowLongW
+        setl.restype = ctypes.c_void_p
+        setl.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+        u32.CallWindowProcW.restype = LRESULT
+        u32.CallWindowProcW.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        s32.DragQueryFileW.restype = wintypes.UINT
+        s32.DragQueryFileW.argtypes = [ctypes.c_void_p, wintypes.UINT, ctypes.c_wchar_p, wintypes.UINT]
+        s32.DragFinish.argtypes = [ctypes.c_void_p]
+        u32.GetParent.restype = wintypes.HWND
+        u32.GetParent.argtypes = [wintypes.HWND]
+        widget.update_idletasks()
+        child = widget.winfo_id()
+        top = u32.GetParent(child) or child               # Tk 최상위 창은 겉 창이 따로 있음
+        hooks = []                                        # (창, 원래 창 프로시저)
+
+        def make_proc(old_holder):
+            def proc(h, msg, wp, lp):
+                try:
+                    if msg == 0x233:                      # WM_DROPFILES
+                        paths = read_dropped_files(s32, wp)
+                        if paths:
+                            widget.after(20, lambda: callback(paths))   # 창 메시지 처리 중에는 대화상자를 띄우지 않고 잠시 뒤에
+                        return 0
+                except Exception:
+                    return 0
+                return u32.CallWindowProcW(old_holder[0], h, msg, wp, lp)
+            return WNDPROC(proc)
+
+        for hwnd in dict.fromkeys((top, child)):
+            holder = [None]
+            cb = make_proc(holder)
+            old = setl(hwnd, -4, ctypes.cast(cb, ctypes.c_void_p))     # GWL_WNDPROC
+            if not old:
+                continue
+            holder[0] = old
+            hooks.append((hwnd, old, cb))
+            s32.DragAcceptFiles(hwnd, True)
+            for m in (0x233, 0x49, 0x4A):                 # 관리자 권한으로 실행 중이어도 끌어다 놓기가 되게
+                try:
+                    u32.ChangeWindowMessageFilterEx(hwnd, m, 1, None)
+                except Exception:
+                    pass
+        widget._drop_hooks = hooks                        # 프로시저가 지워지지 않게 붙들어 둠
+
+        def undo(e):
+            if e.widget is not widget:
+                return
+            for hwnd, old, _cb in hooks:
+                try:
+                    s32.DragAcceptFiles(hwnd, False)
+                    setl(hwnd, -4, old)
+                except Exception:
+                    pass
+        widget.bind("<Destroy>", undo, add="+")
+        return bool(hooks)
+    except Exception:
+        return False
 
 
 def desktop_dir():
@@ -6751,6 +6860,8 @@ class App:
 
         # ───────── 왼쪽: 파일 목록
         ttk.Label(left, text="합칠 파일 (위에서 아래 순서로 합쳐집니다)", font=("맑은 고딕", 9, "bold")).pack(anchor="w")
+        drop_v = tk.StringVar()
+        ttk.Label(left, textvariable=drop_v, foreground="#2b6cb0").pack(anchor="w")
         bt = ttk.Frame(left)
         bt.pack(fill="x", pady=(4, 4))
         spf = ttk.LabelFrame(left, text=" 이 파일에서 가져올 쪽 ", padding=6)
@@ -6962,26 +7073,48 @@ class App:
             except tk.TclError:
                 pass
 
+        busy = {"v": False}
+
+        def add_paths(ps):
+            if busy["v"]:
+                return
+            busy["v"] = True
+            try:
+                last = None
+                for p in ps:
+                    try:
+                        d, pw_ = open_pdf_ask(p, os.path.basename(p), dlg)      # 암호가 걸려 있으면 입력창
+                    except Exception as ex:
+                        messagebox.showwarning(APP, f"{os.path.basename(p)}\n\n열 수 없습니다:\n{ex}", parent=dlg)
+                        continue
+                    if d is None:                                               # 암호 입력을 취소하거나 3번 틀림 → 이 파일은 건너뜀
+                        continue
+                    k = add_entry(os.path.basename(p), p, None, d, pw_)
+                    if k is not None:
+                        last = k
+                regrab()
+                if last is not None:
+                    refresh_files(last)
+            finally:
+                busy["v"] = False
+
         def add_files():
             init = os.path.dirname(self.path) if self.path else ""
             ps = filedialog.askopenfilenames(parent=dlg, title="합칠 PDF 고르기 (여러 개 선택 가능)",
                                              filetypes=[("PDF", "*.pdf"), ("모든 파일", "*.*")],
                                              initialdir=init if init and os.path.isdir(init) else None)
-            last = None
-            for p in ps:
-                try:
-                    d, pw_ = open_pdf_ask(p, os.path.basename(p), dlg)      # 암호가 걸려 있으면 입력창
-                except Exception as ex:
-                    messagebox.showwarning(APP, f"{os.path.basename(p)}\n\n열 수 없습니다:\n{ex}", parent=dlg)
-                    continue
-                if d is None:                                               # 암호 입력을 취소하거나 3번 틀림 → 이 파일은 건너뜀
-                    continue
-                k = add_entry(os.path.basename(p), p, None, d, pw_)
-                if k is not None:
-                    last = k
-            regrab()
-            if last is not None:
-                refresh_files(last)
+            add_paths(ps)
+
+        def on_drop(paths):
+            """탐색기에서 파일·폴더를 끌어다 놓음 → 목록 맨 아래에 추가"""
+            if not dlg.winfo_exists() or busy["v"]:
+                return
+            pdfs, skipped = expand_pdf_paths(paths)
+            if pdfs:
+                add_paths(pdfs)
+            if skipped:
+                messagebox.showinfo(APP, f"PDF가 아닌 파일(또는 PDF가 없는 폴더) {skipped}개는 건너뛰었습니다.", parent=dlg)
+                regrab()
 
         def add_open_doc(t):
             try:
@@ -7239,6 +7372,17 @@ class App:
         ttk.Button(bot, text="병합해서 저장...", command=do_merge).pack(side="right", padx=4)
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         refresh_files()
+
+        def hook_drop(tries=[0]):
+            if not dlg.winfo_exists():
+                return
+            if not dlg.winfo_viewable() and tries[0] < 15:      # 창이 자리 잡힌 뒤에 연결
+                tries[0] += 1
+                dlg.after(150, hook_drop)
+                return
+            if enable_file_drop(dlg, on_drop):
+                drop_v.set("📥 탐색기에서 PDF 파일·폴더를 이 창에 끌어다 놓아도 추가됩니다")
+        dlg.after(200, hook_drop)
         dlg.grab_set()
         dlg.wait_window()
         if st["fill"] is not None:
