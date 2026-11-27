@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.37"
+APP_VER = "1.0.38"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -3238,6 +3238,8 @@ class App:
         em.add_radiobutton(label="    줄 단위", value="line", variable=self.unit, command=self.reload_items)
         em.add_radiobutton(label="    조각 단위", value="span", variable=self.unit, command=self.reload_items)
         em.add_checkbutton(label="새 글자가 길면 글자 크기 줄이기", variable=self.autofit)
+        em.add_command(label="쪽 전체 글자 목록으로 편집...", command=self.page_edit_dialog)
+        em.add_separator()
         em.add_checkbutton(label="원래 글꼴 유지해서 수정 (없는 글자만 기본 글꼴)", variable=self.keep_font)
         mb.add_cascade(label="편집", menu=em)
 
@@ -6425,6 +6427,145 @@ class App:
                     kw["fontfile"] = fpath
                 page.insert_text(fitz.Point(x, y), t, **kw)
                 x += fo.text_length(t, fontsize=size)
+
+    def page_edit_dialog(self):
+        """쪽 전체 글자 목록 창: 그 쪽의 모든 줄을 표로 보여 주고, 여러 곳을 고친 뒤 한 번에 적용 (◀ ▶ 로 쪽 이동)"""
+        if not self.doc:
+            return
+        dlg = Popup(self.root)
+        dlg.title("쪽 전체 글자 편집")
+        dlg.transient(self.root)
+        dlg.minsize(760, 480)
+        dlg.size_hint = (900, 640)
+        pend = {}                      # {쪽: {순번: 새 글자}}
+        cur = {"p": self.page_no, "items": [], "iid": None}
+        top = ttk.Frame(dlg, padding=(10, 8, 10, 0))
+        top.pack(fill="x")
+        pg_v = tk.StringVar()
+        ttk.Button(top, text="◀ 앞 쪽", command=lambda: go(cur["p"] - 1)).pack(side="left")
+        ttk.Label(top, textvariable=pg_v, width=16, anchor="center", font=("맑은 고딕", 10, "bold")).pack(side="left", padx=6)
+        ttk.Button(top, text="뒤 쪽 ▶", command=lambda: go(cur["p"] + 1)).pack(side="left")
+        cnt_v = tk.StringVar()
+        ttk.Label(top, textvariable=cnt_v, foreground="#c0392b").pack(side="right")
+        mid = ttk.Frame(dlg, padding=10)
+        mid.pack(fill="both", expand=True)
+        tv = ttk.Treeview(mid, columns=("no", "old", "new"), show="headings", selectmode="browse")
+        for c, t, w, st_ in (("no", "순서", 46, False), ("old", "원래 글자", 340, True), ("new", "고친 글자 (더블클릭하거나 아래 칸에 입력)", 340, True)):
+            tv.heading(c, text=t)
+            tv.column(c, width=w, anchor="center" if c == "no" else "w", stretch=st_)
+        tv.tag_configure("chg", background="#fff1cc")
+        sb = ttk.Scrollbar(mid, orient="vertical", command=tv.yview)
+        tv.configure(yscrollcommand=sb.set)
+        tv.pack(side="left", fill="both", expand=True)
+        sb.pack(side="left", fill="y")
+        ef = ttk.Frame(dlg, padding=(10, 0, 10, 4))
+        ef.pack(fill="x")
+        ttk.Label(ef, text="고칠 글자").pack(side="left")
+        ev = tk.StringVar()
+        ent = ttk.Entry(ef, textvariable=ev, font=("맑은 고딕", 10))
+        ent.pack(side="left", fill="x", expand=True, padx=6)
+        ttk.Button(ef, text="되돌리기", command=lambda: revert()).pack(side="left")
+        ttk.Label(dlg, text="줄을 고르고 글자를 고치면 노란색으로 표시됩니다. 글꼴·크기·색은 원래대로 유지됩니다. [모두 적용]을 눌러야 PDF에 반영됩니다.",
+                  foreground="#666", padding=(10, 0, 10, 4)).pack(anchor="w")
+        bot = ttk.Frame(dlg, padding=(10, 4, 10, 10))
+        bot.pack(fill="x")
+
+        def count():
+            n = sum(len(v) for v in pend.values())
+            cnt_v.set(f"고친 곳 {n}개" if n else "")
+
+        def fill():
+            tv.delete(*tv.get_children())
+            cur["items"] = self.items_for(cur["p"])
+            ch = pend.get(cur["p"], {})
+            for i, it in enumerate(cur["items"]):
+                new = ch.get(i)
+                tv.insert("", "end", iid=str(i), values=(i + 1, it["text"], new if new is not None else ""),
+                          tags=("chg",) if new is not None else ())
+            pg_v.set(f"{cur['p'] + 1} / {len(self.doc)} 쪽")
+            ev.set("")
+            cur["iid"] = None
+            count()
+            if not cur["items"]:
+                tv.insert("", "end", values=("", "(이 쪽에서 글자를 찾지 못했습니다)", ""))
+
+        def go(p):
+            if 0 <= p < len(self.doc):
+                cur["p"] = p
+                fill()
+
+        def on_sel(_=None):
+            sel_ = tv.selection()
+            if not sel_ or not sel_[0].isdigit():
+                return
+            cur["iid"] = int(sel_[0])
+            i = cur["iid"]
+            ch = pend.get(cur["p"], {})
+            ev.set(ch[i] if i in ch else cur["items"][i]["text"])
+            ent.focus_set()
+            ent.select_range(0, "end")
+
+        def commit(_=None):
+            i = cur["iid"]
+            if i is None:
+                return
+            old = cur["items"][i]["text"]
+            new = ev.get()
+            d = pend.setdefault(cur["p"], {})
+            if new == old:
+                d.pop(i, None)
+                tv.item(str(i), values=(i + 1, old, ""), tags=())
+            else:
+                d[i] = new
+                tv.item(str(i), values=(i + 1, old, new), tags=("chg",))
+            if not d:
+                pend.pop(cur["p"], None)
+            count()
+            nxt = str(i + 1)
+            if tv.exists(nxt):
+                tv.selection_set(nxt)
+                tv.see(nxt)
+
+        def revert():
+            i = cur["iid"]
+            if i is None:
+                return
+            pend.get(cur["p"], {}).pop(i, None)
+            tv.item(str(i), values=(i + 1, cur["items"][i]["text"], ""), tags=())
+            ev.set(cur["items"][i]["text"])
+            count()
+        tv.bind("<<TreeviewSelect>>", on_sel)
+        ent.bind("<Return>", commit)
+        tv.bind("<Double-Button-1>", lambda e: (ent.focus_set(), ent.select_range(0, "end")))
+
+        def apply_all():
+            commit()
+            n = sum(len(v) for v in pend.values())
+            if not n:
+                dlg.destroy()
+                return
+            dlg.destroy()
+            try:
+                self.push_undo()
+                pages = []
+                for p, d in sorted(pend.items()):
+                    its = self.items_for(p)
+                    edits = [(its[i]["rect"], its[i]["origin"], its[i]["size"], its[i]["color"], its[i]["bold"], t,
+                              its[i].get("font")) for i, t in sorted(d.items()) if i < len(its)]
+                    if edits:
+                        self.apply_edits(self.doc[p], edits)
+                        pages.append(p)
+                self.dirty = True
+                self.items_cache.clear()
+                self.refresh_pages(pages)
+                self.status.set(f"{len(pages)}개 쪽, {n}곳을 고쳤습니다. (Ctrl+Z 되돌리기, Ctrl+S 저장)")
+            except Exception as ex:
+                messagebox.showerror(APP, f"수정 실패:\n{ex}")
+        ttk.Button(bot, text="취소", command=dlg.destroy).pack(side="right")
+        ttk.Button(bot, text="모두 적용", command=apply_all).pack(side="right", padx=4)
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        fill()
+        dlg.grab_set()
 
     def edit_dialog(self, it):
         dlg = Popup(self.root)

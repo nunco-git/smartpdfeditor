@@ -4,6 +4,7 @@
 외부 라이브러리는 PyMuPDF(fitz)만 사용합니다. docx / xlsx / hwpx 는 직접 만든 XML을 zip으로 묶어 저장합니다.
 """
 import io
+import math
 import os
 import re
 import shutil
@@ -349,14 +350,64 @@ def _enhance(pix):
         return pix
 
 
-def ocr_lines(page, engine, aux, dpi=300):
+def detect_skew(page):
+    """스캔이 기울어진 각도(도)를 추정. 글줄이 가장 또렷하게 가로로 모이는 각도를 찾음 (-5° ~ +5°). 못 구하면 0"""
+    try:
+        z = 80 / 72.0
+        pix = page.get_pixmap(matrix=fitz.Matrix(z, z), colorspace=fitz.csGRAY, alpha=False)
+        w, h, data = pix.width, pix.height, pix.samples
+        if w < 50 or h < 50:
+            return 0.0
+        srt = sorted(data[::max(1, len(data) // 20000)])
+        thr = min(srt[len(srt) // 10] + 25, 170)        # 어두운 쪽 글자 픽셀 기준
+        pts = []
+        for y in range(h):
+            row = data[y * w:(y + 1) * w]
+            for x in range(w):
+                if row[x] < thr:
+                    pts.append((x, y))
+        if len(pts) < 300:
+            return 0.0
+        if len(pts) > 25000:
+            pts = pts[::len(pts) // 25000 + 1]
+        best, best_a = -1.0, 0.0
+        base = None
+        n = 4.0
+        steps = [i * 0.25 for i in range(-int(5 / 0.25), int(5 / 0.25) + 1)]
+        for ang in steps:
+            t = math.radians(ang)
+            sn, cs = math.sin(t), math.cos(t)
+            cnt = {}
+            for x, y in pts:
+                k = int(y * cs - x * sn)
+                cnt[k] = cnt.get(k, 0) + 1
+            sc = sum(v * v for v in cnt.values())
+            if ang == 0.0:
+                base = sc
+            if sc > best:
+                best, best_a = sc, ang
+        if base and best < base * 1.03:              # 눈에 띄는 차이가 없으면 건드리지 않음
+            return 0.0
+        return best_a if abs(best_a) >= 0.4 else 0.0
+    except Exception:
+        return 0.0
+
+
+def ocr_lines(page, engine, aux, dpi=300, deskew=True):
     """한 쪽을 글자 인식. 줄 목록 [{'bbox':(x0,y0,x1,y1), 'text':str, 'words':[(x0,y0,x1,y1,text)]}] (PDF 좌표, 단위 pt).
-    좌표는 '쪽을 눈으로 본 방향(회전 반영)' 기준입니다."""
+    좌표는 '쪽을 눈으로 본 방향(회전 반영)' 기준입니다. 기울어진 스캔은 바로 세워서 인식합니다."""
     r = page.rect
     scale = dpi / 72.0
     if engine == "winrt":
         scale = min(scale, 2500.0 / max(r.width, r.height))
-    pix = _enhance(page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csGRAY, alpha=False))
+    ang = detect_skew(page) if deskew else 0.0
+    M = fitz.Matrix(scale, scale)
+    if ang:
+        c = fitz.Point(r.width / 2, r.height / 2)
+        M = fitz.Matrix(1, 0, 0, 1, -c.x, -c.y) * fitz.Matrix(-ang) * fitz.Matrix(1, 0, 0, 1, c.x, c.y) * M
+    pix = page.get_pixmap(matrix=M, colorspace=fitz.csGRAY, alpha=False)
+    ox, oy = pix.x, pix.y                            # 돌린 그림의 왼쪽 위 (화면 좌표)
+    pix = _enhance(pix)
     fd, png = tempfile.mkstemp(suffix=".png")
     os.close(fd)
     try:
@@ -367,14 +418,21 @@ def ocr_lines(page, engine, aux, dpi=300):
             os.remove(png)
         except OSError:
             pass
-    k = 1.0 / scale
+    inv = ~M
     lines = {}
     order = []
     for key, x, y, w, h, t in rows:
         if key not in lines:
             lines[key] = []
             order.append(key)
-        lines[key].append((x * k, y * k, (x + w) * k, (y + h) * k, t))
+        if ang:
+            ps = [fitz.Point(px + ox, py + oy) * inv for px, py in ((x, y), (x + w, y), (x, y + h), (x + w, y + h))]
+            x0, y0 = min(q.x for q in ps), min(q.y for q in ps)
+            x1, y1 = max(q.x for q in ps), max(q.y for q in ps)
+            lines[key].append((x0, y0, x1, y1, t))
+        else:
+            k = 1.0 / scale
+            lines[key].append((x * k, y * k, (x + w) * k, (y + h) * k, t))
     out = []
     for key in order:
         ws = sorted(lines[key], key=lambda a: a[0])
