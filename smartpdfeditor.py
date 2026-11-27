@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.31"
+APP_VER = "1.0.32"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -2895,6 +2895,58 @@ class App:
         except tk.TclError:
             pass
 
+    def manual_update_check(self):
+        """도움말 → 새 버전 확인: 최신 릴리스를 확인하고, 새 버전이면 바로 자동 업데이트를 권함"""
+        box = {}
+
+        def work():
+            try:
+                rel = json.loads(net_request(UPDATE_API, headers={"User-Agent": f"smartpdfeditor/{APP_VER}",
+                                                                  "Accept": "application/vnd.github+json"},
+                                             limit=1024 * 1024).decode("utf-8"))
+                tag = str(rel.get("tag_name", "")).lstrip("vV")
+                box["tag"] = tag
+                box["rel"] = rel
+            except Exception as e:
+                box["err"] = str(e) or e.__class__.__name__
+            box["done"] = True
+        self.status.set("새 버전을 확인하는 중…")
+        threading.Thread(target=work, daemon=True).start()
+
+        def wait(n=0):
+            if not box.get("done") and n < 40:
+                self.root.after(500, lambda: wait(n + 1))
+                return
+            self.status.set("")
+            if "err" in box or not box.get("tag"):
+                messagebox.showwarning(APP, "새 버전을 확인하지 못했습니다.\n인터넷(깃허브) 연결이 막혀 있는지 확인해 주세요."
+                                       + (f"\n\n{box['err']}" if box.get("err") else ""), parent=self.root)
+                return
+            tag, rel = box["tag"], box["rel"]
+            if ver_tuple(tag) <= ver_tuple(APP_VER):
+                self.update_info = None
+                self.show_update_btn()
+                messagebox.showinfo(APP, f"지금 최신 버전입니다. (v{APP_VER})", parent=self.root)
+                return
+            info = {"version": tag, "tag": str(rel.get("tag_name", "")), "date": str(rel.get("published_at") or "")[:10],
+                    "notes": str(rel.get("body") or "")[:3000]}
+            self.update_info = info
+            self.conf["prefs"]["update_avail"] = info
+            self.show_update_btn()
+            if not messagebox.askyesno(APP, f"새 버전 v{tag} 이(가) 있습니다. (지금 v{APP_VER})\n자동으로 업데이트할까요?",
+                                       parent=self.root):
+                return
+
+            class _St:
+                def set(self_, t):
+                    self.status.set(t)
+
+            class _Bt:
+                def configure(self_, **k):
+                    pass
+            self.auto_update(info, self.root, _Bt(), _St())
+        self.root.after(500, wait)
+
     def auto_update(self, info, dlg, btn, status):
         """새 exe 를 내려받아 현재 exe 자리에 덮어쓰기 (모든 창 종료 → 덮어쓰기 → 다시 실행)"""
         if not getattr(sys, "frozen", False):
@@ -3201,7 +3253,7 @@ class App:
         hm2.add_command(label="사용방법", accelerator="F1", command=self.show_help, image=self.menu_icon("help"),
                         compound="left")
         hm2.add_command(label="smartgong.kr 바로가기", command=lambda: webbrowser.open(HOME_URL))
-        hm2.add_command(label="새 버전 내려받기", command=lambda: webbrowser.open(DOWNLOAD_URL))
+        hm2.add_command(label="새 버전 확인 (있으면 자동 업데이트)", command=self.manual_update_check)
         hm2.add_separator()
         hm2.add_command(label="바로가기 만들기 (바탕화면·작업표시줄)…", command=self.shortcut_menu_at_pointer)
         hm2.add_command(label="정보 · 라이선스", command=self.show_about)
@@ -3262,12 +3314,11 @@ class App:
         self.tool_rbs = {}
         for k, _ in TOOLS:
             rb = ttk.Radiobutton(self.toolbtns, text=short[k], value=k, variable=self.mode, style="Toolbutton",
-                                 compound="left", command=self.on_mode)
+                                 compound="top", command=self.on_mode)
             self.set_icon(rb, "t_" + k, "top")
             rb.pack(side="left", padx=0)
             Tooltip(rb, tips[k])
             self.tool_rbs[k] = rb
-            self.labeled.append(rb)
         # 도구 옵션(펼침메뉴 등)은 이 바로가기 왼쪽에 보임: 병합 · 용량 줄이기 · 문서(워드·엑셀·한글) 변환 · 그림 변환
         self.quick = ttk.Frame(self.toolarea)
         ttk.Separator(self.quick, orient="vertical").pack(side="left", fill="y", padx=3)
@@ -3276,7 +3327,7 @@ class App:
                                      ("m_shrink", "용량줄이기", "PDF 용량 줄이기 — 사진·스캔 그림을 줄여 새 파일로 저장", self.shrink_dialog),
                                      ("m_doc", "문서변환", "문서 변환 — 워드·엑셀·한글 문서로 내보내기", self.export_dialog),
                                      ("m_img", "이미지 변환", "이미지 변환 — 쪽을 그림 파일(PNG·JPG)로 저장", self.images_dialog)):
-            qb = ttk.Button(self.quick, text=label, style="Quick.Toolbutton", width=-1, compound="left", command=cmd)
+            qb = ttk.Button(self.quick, text=label, style="Quick.Toolbutton", width=-1, compound="top", command=cmd)
             self.set_icon(qb, ico, "top")
             qb.pack(side="left", padx=0)
             Tooltip(qb, tip)
