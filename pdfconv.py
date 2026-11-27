@@ -51,12 +51,13 @@ SHRINK_LEVELS = {
 }
 
 
-def _shrink_images_fallback(doc, thr, target, quality, pages=None, gray=False):
+def _shrink_images_fallback(doc, thr, target, quality, pages=None, gray=False, progress=None):
     """rewrite_images 가 없는 구버전 PyMuPDF 용: 그림을 하나씩 줄여서 교체"""
     done = set()
-    for pi, page in enumerate(doc):
-        if pages is not None and pi not in pages:
-            continue
+    todo = [pi for pi in range(len(doc)) if pages is None or pi in pages]
+    for n_, pi in enumerate(todo):
+        page = doc[pi]
+        _tick(progress, int(80 * n_ / max(1, len(todo))), 100, f"그림 줄이는 중... ({n_ + 1}/{len(todo)}쪽)")
         for img in page.get_images(full=True):
             xref = img[0]
             if xref in done:
@@ -94,13 +95,13 @@ def shrink_pdf(src_bytes, dst, level, progress=None, pages=None):
     try:
         if doc.needs_pass:
             raise ValueError("암호가 걸린 PDF 입니다.")
-        _tick(progress, 0, 3, "그림 줄이는 중...")
+        _tick(progress, 0, 100, "그림 줄이는 중...")
+        _shrink_images_fallback(doc, thr, target, q, None if pages is None else set(pages), gray, progress)
         if pages is None and hasattr(doc, "rewrite_images") and not gray:
+            _tick(progress, 80, 100, "그림 마무리 정리 중...")      # 위에서 못 건드린 그림(투명 등)까지 한 번 더
             doc.rewrite_images(dpi_threshold=thr, dpi_target=target, quality=q,
                                lossy=True, lossless=True, bitonal=True, color=True, gray=True)
-        else:
-            _shrink_images_fallback(doc, thr, target, q, None if pages is None else set(pages), gray)
-        _tick(progress, 1, 3, "불필요한 데이터 정리 중...")
+        _tick(progress, 88, 100, "불필요한 데이터 정리 중...")
         if rest:                                  # 가장 센 단계: 썸네일·메타데이터 등 군더더기도 제거
             try:
                 doc.scrub(metadata=True, thumbnails=True, xml_metadata=True, attached_files=False,
@@ -111,7 +112,7 @@ def shrink_pdf(src_bytes, dst, level, progress=None, pages=None):
             doc.subset_fonts()                  # fontTools 가 있을 때만 동작
         except Exception:
             pass
-        _tick(progress, 2, 3, "저장 중...")
+        _tick(progress, 92, 100, "저장 중... (용량이 크면 시간이 걸립니다)")
         tmp = dst + ".tmp"
         try:
             doc.save(tmp, garbage=4, deflate=True, deflate_images=True, deflate_fonts=True,
@@ -122,7 +123,7 @@ def shrink_pdf(src_bytes, dst, level, progress=None, pages=None):
         os.replace(tmp, dst)
     finally:
         doc.close()
-    _tick(progress, 3, 3, "완료")
+    _tick(progress, 100, 100, "완료")
     return before, after
 
 

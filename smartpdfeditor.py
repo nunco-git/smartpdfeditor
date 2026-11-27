@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.40"
+APP_VER = "1.0.41"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -7110,7 +7110,9 @@ class App:
         msg = tk.StringVar(value="준비 중...")
         ttk.Label(frm, textvariable=msg, width=44).pack(anchor="w")
         bar = ttk.Progressbar(frm, length=320, mode="determinate", maximum=100)
-        bar.pack(pady=8)
+        bar.pack(pady=(8, 2))
+        pct_v = tk.StringVar(value="0%")
+        ttk.Label(frm, textvariable=pct_v, font=("맑은 고딕", 14, "bold"), foreground="#2b6cb0").pack(pady=(0, 6))
 
         def stop():
             cancel["v"] = True
@@ -7140,6 +7142,7 @@ class App:
                     if m[0] == "p":
                         msg.set(m[3] or msg.get())
                         bar["value"] = 100.0 * m[1] / max(1, m[2])
+                        pct_v.set(f"{int(bar['value'])}%")
                     else:
                         fin = m
             except queue.Empty:
@@ -7271,7 +7274,11 @@ class App:
 
         # ───────── 오른쪽: 쪽 미리보기
         head_v = tk.StringVar(value="")
-        ttk.Label(right, textvariable=head_v, font=("맑은 고딕", 9, "bold")).pack(anchor="w")
+        hdr = ttk.Frame(right)
+        hdr.pack(fill="x")
+        fs_btn = ttk.Button(hdr, text="⛶ 전체 화면", command=lambda: toggle_full())
+        fs_btn.pack(side="right")
+        ttk.Label(hdr, textvariable=head_v, font=("맑은 고딕", 9, "bold")).pack(side="left", anchor="w")
         tb = ttk.Frame(right)
         tb.pack(fill="x", pady=(4, 4))
         cvf = ttk.Frame(right)
@@ -7835,18 +7842,21 @@ class App:
         ttk.Label(bot, textvariable=sum_v).pack(side="left")
         ttk.Button(bot, text="취소", command=dlg.destroy).pack(side="right")
 
+        fs = {"on": False}
+
         def toggle_full(_=None):
+            """전체 화면(작업 표시줄까지 덮음) ↔ 보통 창. 오른쪽 위 버튼으로도 해제"""
+            fs["on"] = not fs["on"]
             try:
-                full = dlg.state() == "zoomed"
-                dlg.state("normal" if full else "zoomed")
+                dlg.attributes("-fullscreen", fs["on"])
             except tk.TclError:
                 try:
-                    dlg.attributes("-zoomed", not dlg.attributes("-zoomed"))
+                    dlg.state("zoomed" if fs["on"] else "normal")
                 except tk.TclError:
                     pass
+            fs_btn.configure(text="🗗 전체화면 해제" if fs["on"] else "⛶ 전체 화면")
             return "break"
-        ttk.Button(bot, text="⛶ 전체 화면", command=toggle_full).pack(side="right", padx=(0, 14))
-        dlg.after(300, lambda: dlg.winfo_exists() and dlg.state() != "zoomed" and toggle_full())     # 처음부터 전체 화면
+        dlg.after(300, lambda: dlg.winfo_exists() and not fs["on"] and toggle_full())     # 처음부터 전체 화면
         dlg.bind("<F11>", toggle_full)
 
         dlg.bind("<Escape>", lambda e: dlg.destroy())
