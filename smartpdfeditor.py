@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.35"
+APP_VER = "1.0.36"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -1053,6 +1053,24 @@ class Popup(tk.Toplevel):
 
 def ask_text(parent, title, prompt, initial=""):
     return _ask_text(parent, title, prompt, initial, False)
+
+
+def ask_password_new(parent, has_old=False):
+    """저장할 암호를 두 번 입력받음. 취소=None, 비움=""(암호 없음)"""
+    while True:
+        a = _ask_text(parent, "암호 설정해서 저장", "저장할 PDF의 암호를 입력하세요."
+                      + ("\n(비워 두면 암호를 없애고 저장합니다)" if has_old else "\n(이 암호를 모르면 열 수 없으니 꼭 기억해 두세요)"),
+                      "", True)
+        if a is None:
+            return None
+        if not a:
+            return ""
+        b = _ask_text(parent, "암호 확인", "같은 암호를 한 번 더 입력하세요.", "", True)
+        if b is None:
+            return None
+        if a == b:
+            return a
+        messagebox.showwarning(APP, "두 암호가 서로 다릅니다. 다시 입력해 주세요.", parent=parent)
 
 
 def ask_password(parent, name):
@@ -3120,6 +3138,7 @@ class App:
                        image=self.menu_icon("save"), compound="left")
         fm.add_command(label="다른 이름으로 저장...", accelerator="Ctrl+Shift+S", command=self.save_as,
                        image=self.menu_icon("save_as"), compound="left")
+        fm.add_command(label="암호 설정해서 저장...", command=self.save_with_password)
         fm.add_command(label="인쇄...", accelerator="Ctrl+P", command=self.print_doc,
                        image=self.menu_icon("print"), compound="left")
         fm.add_command(label="원하는 쪽만 저장...", accelerator="Ctrl+E", command=self.extract_dialog)
@@ -4307,6 +4326,22 @@ class App:
         finally:
             api["gdi"].DeleteDC(hdc)
             self.root.configure(cursor="")
+
+    def save_with_password(self):
+        """암호를 정해서 다른 이름으로 저장 (비워 두면 암호 없이 저장 = 암호 해제)"""
+        if not self.doc:
+            return False
+        pw = ask_password_new(self.root, bool(self.tab.password))
+        if pw is None:
+            return False
+        old = self.tab.password
+        self.tab.password = pw or None
+        ok = self.save_as()
+        if not ok:
+            self.tab.password = old
+        else:
+            self.status.set("암호를 걸어 저장했습니다." if pw else "암호 없이 저장했습니다.")
+        return ok
 
     def save_as(self):
         """다른 이름으로 저장 (Ctrl+Shift+S) — 저장한 뒤에는 탭이 새 파일을 가리킴"""
