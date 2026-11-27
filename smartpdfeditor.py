@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.36"
+APP_VER = "1.0.37"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -1605,6 +1605,78 @@ def get_font(bold):
     return res
 
 
+# 시스템 글꼴 이름 → 윈도우 글꼴 파일 (PDF 에 글꼴이 들어 있지 않을 때 같은 글꼴을 찾아 씀)
+_SYS_FONTS = [("malgun", "malgun.ttf", "malgunbd.ttf"), ("맑은고딕", "malgun.ttf", "malgunbd.ttf"),
+              ("batang", "batang.ttc", "batang.ttc"), ("바탕", "batang.ttc", "batang.ttc"),
+              ("gulim", "gulim.ttc", "gulim.ttc"), ("굴림", "gulim.ttc", "gulim.ttc"),
+              ("dotum", "dotum.ttc", "dotum.ttc"), ("돋움", "dotum.ttc", "dotum.ttc"),
+              ("gungsuh", "gungsuh.ttc", "gungsuh.ttc"), ("궁서", "gungsuh.ttc", "gungsuh.ttc"),
+              ("nanumgothic", "NanumGothic.ttf", "NanumGothicBold.ttf"), ("나눔고딕", "NanumGothic.ttf", "NanumGothicBold.ttf"),
+              ("nanummyeongjo", "NanumMyeongjo.ttf", "NanumMyeongjoBold.ttf"),
+              ("arial", "arial.ttf", "arialbd.ttf"), ("timesnewroman", "times.ttf", "timesbd.ttf"),
+              ("couriernew", "cour.ttf", "courbd.ttf"), ("calibri", "calibri.ttf", "calibrib.ttf"),
+              ("verdana", "verdana.ttf", "verdanab.ttf"), ("tahoma", "tahoma.ttf", "tahomabd.ttf")]
+
+
+def original_fonts(doc, page, span_font, bold):
+    """수정할 글자의 원래 글꼴로 쓸 수 있는 후보들 [(PDF 글꼴이름, 파일경로 또는 None, 글꼴 바이트 또는 None, fitz.Font)].
+    1) PDF 안에 들어 있는 글꼴  2) 같은 이름의 윈도우 글꼴.  못 찾으면 빈 목록(→ 기본 한글 글꼴)"""
+    out = []
+    base = re.sub(r"^[A-Z]{6}\+", "", str(span_font or ""))
+    norm = re.sub(r"[\s\-_,]", "", base).lower()
+    if not norm:
+        return out
+    try:
+        for f in page.get_fonts(full=True):
+            bf = re.sub(r"^[A-Z]{6}\+", "", str(f[3]))
+            if bf == base or re.sub(r"[\s\-_,]", "", bf).lower() == norm:
+                try:
+                    _n, ext, _t, buf = doc.extract_font(f[0])
+                    if buf and ext not in ("", "n/a", "cff"):
+                        fo = fitz.Font(fontbuffer=buf)
+                        out.append(("o%d" % f[0], None, buf, fo))
+                        break
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    for key, reg, bd in _SYS_FONTS:
+        if key in norm:
+            want_bold = bold or "bold" in norm or "bd" in norm
+            for fn in ([bd] if want_bold else []) + [reg]:
+                fp = os.path.join(WIN_FONTS, fn)
+                if os.path.exists(fp):
+                    try:
+                        out.append(("s" + re.sub(r"\W", "", fn), fp, None, fitz.Font(fontfile=fp)))
+                    except Exception:
+                        pass
+                    break
+            break
+    return out
+
+
+def font_runs(text, cands):
+    """글자마다 쓸 수 있는 글꼴을 골라 같은 글꼴끼리 묶음 [(글꼴 후보, 글자)] — 원래 글꼴에 없는 글자만 기본 글꼴로"""
+    runs = []
+    for ch in text:
+        pick = None
+        if ch.isspace():
+            pick = runs[-1][0] if runs else None
+        if pick is None:
+            for c in cands:
+                try:
+                    if c[3].has_glyph(ord(ch)):
+                        pick = c
+                        break
+                except Exception:
+                    continue
+        if runs and runs[-1][0] is pick:
+            runs[-1][1] += ch
+        else:
+            runs.append([pick, ch])
+    return runs
+
+
 @contextlib.contextmanager
 def unrotated(page):
     """회전된 페이지도 회전 0 기준 좌표로 다루기 위해 잠시 회전을 풀었다가 되돌림"""
@@ -2830,6 +2902,7 @@ class App:
         self.img = None
         self.unit = tk.StringVar(value=pr.get("unit", "line"))
         self.autofit = tk.BooleanVar(value=pr.get("autofit", True))
+        self.keep_font = tk.BooleanVar(value=pr.get("keep_font", True))
         self.panel_on = tk.BooleanVar(value=pr.get("panel", True))
         self.mode = tk.StringVar(value="edit")
         self.mark_color = pr.get("mark_color", "#ffe600")
@@ -3165,6 +3238,7 @@ class App:
         em.add_radiobutton(label="    줄 단위", value="line", variable=self.unit, command=self.reload_items)
         em.add_radiobutton(label="    조각 단위", value="span", variable=self.unit, command=self.reload_items)
         em.add_checkbutton(label="새 글자가 길면 글자 크기 줄이기", variable=self.autofit)
+        em.add_checkbutton(label="원래 글꼴 유지해서 수정 (없는 글자만 기본 글꼴)", variable=self.keep_font)
         mb.add_cascade(label="편집", menu=em)
 
         vm = tk.Menu(mb, tearoff=0)
@@ -4393,7 +4467,7 @@ class App:
         for t in self.tabs:
             self.remember_page(t)
         pr = self.conf["prefs"]
-        pr.update(zoom=round(self.zoom, 3), unit=self.unit.get(), autofit=self.autofit.get(),
+        pr.update(zoom=round(self.zoom, 3), unit=self.unit.get(), autofit=self.autofit.get(), keep_font=self.keep_font.get(),
                   panel=self.panel_on.get(), geometry=self.root.geometry(),
                   mark_color=self.mark_color, hide_fill=self.hide_fill.get(),
                   view=self.view, fit=self.fit.get(), shape_kind=self.shape_kind.get(),
@@ -6308,6 +6382,12 @@ class App:
             self._apply_edits(page, edits)
 
     def _apply_edits(self, page, edits):
+        found = {}                                           # 지우기 전에 원래 글꼴부터 확보 (지우면 쓰이지 않는 글꼴은 사라짐)
+        if self.keep_font.get():
+            for e_ in edits:
+                nm_ = e_[6] if len(e_) > 6 else None
+                if nm_ and (nm_, bool(e_[4])) not in found:
+                    found[(nm_, bool(e_[4]))] = original_fonts(self.doc, page, nm_, e_[4])
         for rect, *_ in edits:
             r = fitz.Rect(rect)
             h = r.height
@@ -6319,18 +6399,32 @@ class App:
                                   graphics=fitz.PDF_REDACT_LINE_ART_NONE)  # 표 선·그림 보존
         except (TypeError, AttributeError):
             page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
-        for rect, origin, size, color, bold, text in edits:
+        for rect, origin, size, color, bold, text, *ex in edits:
             if not text:
                 continue
-            fname, fpath, font = get_font(bold)
-            w = font.text_length(text, fontsize=size)
+            fb = get_font(bold)
+            cands = list(found.get((ex[0], bool(bold)), [])) if ex and ex[0] else []
+            cands.append(("fb", fb[1], None, fb[2]))          # 마지막 후보 = 기본 한글 글꼴
+            if fb[1] is None:
+                cands[-1] = ("korea", None, None, fb[2])
+            runs = font_runs(text, cands)
+            w = sum(r[0][3].text_length(r[1], fontsize=size) for r in runs)
             maxw = fitz.Rect(rect).width
             if self.autofit.get() and maxw > 0 and w > maxw * 1.02:
                 size = max(4, size * maxw / w)
-            kw = dict(fontsize=size, fontname=fname, color=color_tuple(color))
-            if fpath:
-                kw["fontfile"] = fpath
-            page.insert_text(origin, text, **kw)
+            x, y = origin
+            for c, t in runs:
+                nm, fpath, fbuf, fo = c
+                kw = dict(fontsize=size, fontname=(fb[0] if nm == "fb" else nm), color=color_tuple(color))
+                if fbuf:
+                    try:
+                        page.insert_font(fontname=nm, fontbuffer=fbuf)
+                    except Exception:
+                        pass
+                elif fpath:
+                    kw["fontfile"] = fpath
+                page.insert_text(fitz.Point(x, y), t, **kw)
+                x += fo.text_length(t, fontsize=size)
 
     def edit_dialog(self, it):
         dlg = Popup(self.root)
@@ -6366,7 +6460,7 @@ class App:
             try:
                 self.push_undo()
                 page = self.doc[self.page_no]
-                self.apply_edits(page, [(it["rect"], it["origin"], sz, it["color"], bold_var.get(), new)])
+                self.apply_edits(page, [(it["rect"], it["origin"], sz, it["color"], bold_var.get(), new, it.get("font"))])
                 self.dirty = True
                 self.refresh_pages([self.page_no])
                 self.status.set("수정했습니다. (Ctrl+Z 되돌리기, Ctrl+S 저장)")
@@ -7861,7 +7955,7 @@ class App:
                         continue
                     bold = bool(sp["flags"] & 16) or "bold" in sp["font"].lower()
                     origin = fitz.Point(h.x0, sp["origin"][1])
-                    edits.append((h, origin, sp["size"], sp["color"], bold, new))
+                    edits.append((h, origin, sp["size"], sp["color"], bold, new, sp["font"]))
                 if edits:
                     plan[pn] = edits
             total = sum(len(v) for v in plan.values())
