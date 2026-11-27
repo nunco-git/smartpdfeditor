@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.41"
+APP_VER = "1.0.42"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -1626,6 +1626,9 @@ def original_fonts(doc, page, span_font, bold):
     norm = re.sub(r"[\s\-_,]", "", base).lower()
     if not norm:
         return out
+    cf = cid_font_for(doc, page, span_font)               # 1순위: PDF 안의 원래 글꼴을 그대로
+    if cf is not None:
+        out.append(("cid", None, None, cf))
     try:
         for f in page.get_fonts(full=True):
             bf = re.sub(r"^[A-Z]{6}\+", "", str(f[3]))
@@ -1675,6 +1678,136 @@ def font_runs(text, cands):
         else:
             runs.append([pick, ch])
     return runs
+
+
+class CidFont:
+    """PDF 안에 이미 들어 있는 글꼴(부분 내장 포함)을 그대로 써서 글자를 쓰기 위한 정보.
+    글꼴에 이미 있는 글자(ToUnicode 표 기준)만 쓸 수 있고, 글자 폭은 글꼴의 폭 표(W/Widths)에서 읽음."""
+
+    def __init__(self, xref, res, rev, wfun):
+        self.xref, self.res, self.rev, self.wfun = xref, res, rev, wfun
+
+    def has_glyph(self, cp):
+        return chr(cp) in self.rev
+
+    def text_length(self, text, fontsize=11):
+        return sum(self.wfun(self.rev[c][0]) for c in text if c in self.rev) * fontsize / 1000.0
+
+    def hexstr(self, text):
+        return "".join(("%0*X" % (self.rev[c][1] * 2, self.rev[c][0])) for c in text if c in self.rev)
+
+
+def _parse_tounicode(txt):
+    rev = {}
+
+    def uni(h):
+        try:
+            return bytes.fromhex(h).decode("utf-16-be")
+        except Exception:
+            return ""
+    for blk in re.findall(r"beginbfchar(.*?)endbfchar", txt, re.S):
+        for a, b in re.findall(r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", blk):
+            u = uni(b)
+            if len(u) == 1 and u not in rev:
+                rev[u] = (int(a, 16), len(a) // 2)
+    for blk in re.findall(r"beginbfrange(.*?)endbfrange", txt, re.S):
+        for a, b, c in re.findall(r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(<[0-9A-Fa-f]+>|\[[^\]]*\])", blk):
+            lo, hi, n = int(a, 16), int(b, 16), len(a) // 2
+            if hi - lo > 70000:
+                continue
+            if c.startswith("<"):
+                u0 = uni(c[1:-1])
+                if len(u0) != 1:
+                    continue
+                for k in range(hi - lo + 1):
+                    ch = chr(ord(u0) + k)
+                    if ch not in rev:
+                        rev[ch] = (lo + k, n)
+            else:
+                for k, h in enumerate(re.findall(r"<([0-9A-Fa-f]+)>", c)):
+                    u = uni(h)
+                    if len(u) == 1 and u not in rev:
+                        rev[u] = (lo + k, n)
+    return rev
+
+
+def _ref(doc, xref, key):
+    """xref 객체의 key 값을 (직접 값 문자열). 다른 객체를 가리키면 그 객체 내용을 읽음"""
+    t, v = doc.xref_get_key(xref, key)
+    if t == "xref":
+        m = re.match(r"(\d+) 0 R", v)
+        if m:
+            return doc.xref_object(int(m.group(1)), compressed=False)
+    return v if t != "null" else ""
+
+
+def cid_font_for(doc, page, span_font):
+    """수정할 글자의 원래 글꼴을 PDF 안에서 찾아 CidFont 로 돌려줌 (못 찾으면 None)"""
+    base = re.sub(r"^[A-Z]{6}\+", "", str(span_font or ""))
+    norm = re.sub(r"[\s\-_,]", "", base).lower()
+    if not norm:
+        return None
+    try:
+        for f in page.get_fonts(full=True):
+            bf = re.sub(r"^[A-Z]{6}\+", "", str(f[3]))
+            if re.sub(r"[\s\-_,]", "", bf).lower() != norm or f[6] != 0:
+                continue
+            xr, res = f[0], f[4]
+            t, v = doc.xref_get_key(xr, "ToUnicode")
+            m = re.match(r"(\d+) 0 R", v or "")
+            if t != "xref" or not m:
+                continue
+            rev = _parse_tounicode(doc.xref_stream(int(m.group(1))).decode("latin-1"))
+            if not rev:
+                continue
+            widths = {}
+            dw = 1000.0
+            sub = doc.xref_get_key(xr, "Subtype")[1]
+            if "Type0" in sub:
+                dm = re.search(r"(\d+) 0 R", doc.xref_get_key(xr, "DescendantFonts")[1] or "")
+                if dm:
+                    dx = int(dm.group(1))
+                    try:
+                        dw = float(doc.xref_get_key(dx, "DW")[1])
+                    except (TypeError, ValueError):
+                        dw = 1000.0
+                    arr = _ref(doc, dx, "W")
+                    toks = re.findall(r"\[|\]|-?\d+\.?\d*", arr)
+                    i = 0
+                    while i < len(toks):
+                        if toks[i] in "[]":
+                            i += 1
+                            continue
+                        c0 = int(float(toks[i]))
+                        if i + 1 < len(toks) and toks[i + 1] == "[":
+                            j = i + 2
+                            k = 0
+                            while j < len(toks) and toks[j] != "]":
+                                widths[c0 + k] = float(toks[j])
+                                k += 1
+                                j += 1
+                            i = j + 1
+                        elif i + 2 < len(toks):
+                            c1, w = int(float(toks[i + 1])), float(toks[i + 2])
+                            if c1 - c0 < 70000:
+                                for c in range(c0, c1 + 1):
+                                    widths[c] = w
+                            i += 3
+                        else:
+                            break
+            else:
+                try:
+                    fc = int(doc.xref_get_key(xr, "FirstChar")[1])
+                    arr = _ref(doc, xr, "Widths")
+                    for k, w in enumerate(re.findall(r"-?\d+\.?\d*", arr)):
+                        widths[fc + k] = float(w)
+                except (TypeError, ValueError):
+                    pass
+                dw = 500.0
+            return CidFont(xr, res, rev, lambda c, w=widths, d=dw: w.get(c, d))
+    except Exception:
+        return None
+    return None
 
 
 @contextlib.contextmanager
@@ -4952,6 +5085,7 @@ class App:
             self.render()
         else:
             self.place_wall()
+            self.root.after(400, self.place_wall)   # 창이 다 자리 잡은 뒤 한 번 더 (처음엔 화면 크기가 아직 작게 읽힘)
 
     # ---------- 프로그램 아이콘 ----------
     def set_app_icon(self):
@@ -5632,6 +5766,8 @@ class App:
         self._cfg_job = None
         if self.doc:
             self.render(goto=self.page_no)
+        else:
+            self.place_wall()                       # PDF 없이 첫 화면일 때도 배경 그림을 창 크기에 맞춰 다시 맞춤
 
     def on_view(self):
         self.view = VIEW_KEY.get(self.view_var.get(), "cont")
@@ -5691,6 +5827,7 @@ class App:
                         rect |= fitz.Rect(s_["bbox"])
                     first = g[0]
                     items.append({
+                        "blk": b.get("number"),
                         "rect": rect,
                         "text": first["text"] if len(g) == 1 else self._join_spans(g),
                         "size": first["size"],
@@ -6076,7 +6213,7 @@ class App:
         if mode == "edit":
             it = self.hit_pt(p, pt)
             if it:
-                self.edit_dialog(it)
+                self.edit_dialog(it, p)
         elif mode in ("mark", "hide"):
             it = self.hit_pt(p, pt)
             if it:
@@ -6391,8 +6528,12 @@ class App:
                 nm_ = e_[6] if len(e_) > 6 else None
                 if nm_ and (nm_, bool(e_[4])) not in found:
                     found[(nm_, bool(e_[4]))] = original_fonts(self.doc, page, nm_, e_[4])
-        for rect, *_ in edits:
-            r = fitz.Rect(rect)
+        for e_ in edits:
+            if len(e_) > 7 and not e_[7]:                    # 지우지 않고 새로 쓰기만 하는 줄
+                continue
+            r = fitz.Rect(e_[0])
+            if r.is_empty:
+                continue
             h = r.height
             r.y0 += h * 0.2   # 위/아래 줄을 지우지 않도록 살짝 줄여서 지움
             r.y1 -= h * 0.2
@@ -6402,11 +6543,23 @@ class App:
                                   graphics=fitz.PDF_REDACT_LINE_ART_NONE)  # 표 선·그림 보존
         except (TypeError, AttributeError):
             page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        have = {f[0] for f in page.get_fonts(full=True)}
+        for lst in found.values():                           # 지우면서 글꼴 연결이 사라졌으면 다시 연결
+            for c in lst:
+                if c[0] == "cid" and c[3].xref not in have:
+                    try:
+                        self.doc.xref_set_key(page.xref, "Resources/Font/" + c[3].res, f"{c[3].xref} 0 R")
+                    except Exception:
+                        pass
+        have = {f[0] for f in page.get_fonts(full=True)}
+        raw = []                                             # 원래 글꼴로 쓸 글자 (본문 스트림으로 직접 씀)
+        inv = ~page.transformation_matrix
         for rect, origin, size, color, bold, text, *ex in edits:
             if not text:
                 continue
             fb = get_font(bold)
-            cands = list(found.get((ex[0], bool(bold)), [])) if ex and ex[0] else []
+            cands = [c for c in (found.get((ex[0], bool(bold)), []) if ex and ex[0] else [])
+                     if c[0] != "cid" or c[3].xref in have]
             cands.append(("fb", fb[1], None, fb[2]))          # 마지막 후보 = 기본 한글 글꼴
             if fb[1] is None:
                 cands[-1] = ("korea", None, None, fb[2])
@@ -6418,16 +6571,29 @@ class App:
             x, y = origin
             for c, t in runs:
                 nm, fpath, fbuf, fo = c
-                kw = dict(fontsize=size, fontname=(fb[0] if nm == "fb" else nm), color=color_tuple(color))
-                if fbuf:
-                    try:
-                        page.insert_font(fontname=nm, fontbuffer=fbuf)
-                    except Exception:
-                        pass
-                elif fpath:
-                    kw["fontfile"] = fpath
-                page.insert_text(fitz.Point(x, y), t, **kw)
+                if nm == "cid":
+                    pt = fitz.Point(x, y) * inv
+                    col = color_tuple(color)
+                    raw.append("q %.4f %.4f %.4f rg BT /%s %.3f Tf 1 0 0 1 %.3f %.3f Tm <%s> Tj ET Q"
+                               % (col[0], col[1], col[2], fo.res, size, pt.x, pt.y, fo.hexstr(t)))
+                else:
+                    kw = dict(fontsize=size, fontname=(fb[0] if nm == "fb" else nm), color=color_tuple(color))
+                    if fbuf:
+                        try:
+                            page.insert_font(fontname=nm, fontbuffer=fbuf)
+                        except Exception:
+                            pass
+                    elif fpath:
+                        kw["fontfile"] = fpath
+                    page.insert_text(fitz.Point(x, y), t, **kw)
                 x += fo.text_length(t, fontsize=size)
+        if raw:
+            d = self.doc
+            xr = d.get_new_xref()
+            d.update_object(xr, "<<>>")
+            d.update_stream(xr, ("\n".join(raw) + "\n").encode("latin-1"))
+            cs = list(page.get_contents()) + [xr]
+            d.xref_set_key(page.xref, "Contents", "[" + " ".join(f"{c} 0 R" for c in cs) + "]")
 
     def page_edit_dialog(self):
         """쪽 전체 글자 목록 창: 그 쪽의 모든 줄을 표로 보여 주고, 여러 곳을 고친 뒤 한 번에 적용 (◀ ▶ 로 쪽 이동)"""
@@ -6568,20 +6734,36 @@ class App:
         fill()
         dlg.grab_set()
 
-    def edit_dialog(self, it):
+    def edit_dialog(self, it, p=None):
+        """글자 수정: 누른 글자가 든 문단 전체(여러 줄)를 한 창에 열어서 고침. 줄 수가 같으면 줄마다 제자리에,
+        줄을 더하거나 빼면 원래 줄 간격대로 이어서 씀"""
+        p = self.page_no if p is None else p
+        allit = self.items_for(p)
+        blk = [x for x in allit if x.get("blk") is not None and x.get("blk") == it.get("blk")] or [it]
+        blk = sorted(blk, key=lambda x: (round(x["origin"].y, 1), x["origin"].x))
         dlg = Popup(self.root)
-        dlg.title("글자 수정")
+        dlg.title("글자 수정 (문단 전체)")
         dlg.transient(self.root)
         dlg.grab_set()
         frm = ttk.Frame(dlg, padding=10)
         frm.pack(fill="both", expand=True)
-        ttk.Label(frm, text=f"원래: {it['text']}", wraplength=520, foreground="#666").pack(anchor="w")
-        ttk.Label(frm, text=f"글꼴 {it['font']} · {it['size']:.1f}pt").pack(anchor="w", pady=(2, 6))
-        var = tk.StringVar(value=it["text"])
-        ent = ttk.Entry(frm, textvariable=var, width=70, font=("맑은 고딕", 11))
-        ent.pack(fill="x")
-        ent.focus_set()
-        ent.select_range(0, "end")
+        ttk.Label(frm, text=f"글꼴 {it['font']} · {it['size']:.1f}pt   (글꼴·크기·색은 원래대로 유지됩니다)").pack(anchor="w", pady=(0, 6))
+        tfm = ttk.Frame(frm)
+        tfm.pack(fill="both", expand=True)
+        h = min(18, max(3, len(blk) + 1))
+        txt = tk.Text(tfm, width=70, height=h, wrap="none", font=("맑은 고딕", 11), undo=True)
+        sbv = ttk.Scrollbar(tfm, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=sbv.set)
+        txt.pack(side="left", fill="both", expand=True)
+        sbv.pack(side="left", fill="y")
+        txt.insert("1.0", "\n".join(x["text"] for x in blk))
+        k0 = next((i for i, x in enumerate(blk) if x is it), 0)
+        txt.focus_set()
+        txt.tag_add("sel", f"{k0 + 1}.0", f"{k0 + 1}.end")
+        txt.mark_set("insert", f"{k0 + 1}.end")
+        txt.see("insert")
+        ttk.Label(frm, text="줄 하나가 PDF의 한 줄입니다. 엔터로 줄을 나누거나 줄을 지울 수 있습니다.  (Ctrl+Enter = 적용)",
+                  foreground="#666").pack(anchor="w", pady=(4, 0))
         size_var = tk.DoubleVar(value=round(it["size"], 1))
         row = ttk.Frame(frm)
         row.pack(fill="x", pady=8)
@@ -6591,20 +6773,38 @@ class App:
         ttk.Checkbutton(row, text="굵게", variable=bold_var).pack(side="left", padx=8)
 
         def ok(_=None):
-            new = var.get()
+            new = txt.get("1.0", "end-1c").split("\n")
             try:
                 sz = float(size_var.get())
             except (tk.TclError, ValueError):
                 sz = it["size"]
             dlg.destroy()
-            if new == it["text"] and abs(sz - it["size"]) < 0.05 and bold_var.get() == it["bold"]:
+            first = blk[0]
+            size_ch = abs(sz - it["size"]) >= 0.05
+            bold_ch = bold_var.get() != it["bold"]
+            pitch = ((blk[-1]["origin"].y - first["origin"].y) / (len(blk) - 1)) if len(blk) > 1 else first["size"] * 1.3
+            edits = []
+            for k in range(max(len(blk), len(new))):
+                old = blk[k] if k < len(blk) else None
+                t = new[k] if k < len(new) else ""
+                if old is not None and t == old["text"] and not size_ch and not bold_ch:
+                    continue
+                if old is not None:
+                    rect, origin, color, font = old["rect"], old["origin"], old["color"], old.get("font")
+                    osz, ob = old["size"], old["bold"]
+                else:
+                    origin = fitz.Point(first["origin"].x, first["origin"].y + pitch * k)
+                    rect = fitz.Rect(first["rect"].x0, origin.y - first["size"], max(x["rect"].x1 for x in blk), origin.y + first["size"] * 0.3)
+                    color, font, osz, ob = first["color"], first.get("font"), first["size"], first["bold"]
+                edits.append((rect, origin, sz if size_ch else osz, color, bold_var.get() if bold_ch else ob, t, font, old is not None))
+            if not edits:
                 return
             try:
                 self.push_undo()
-                page = self.doc[self.page_no]
-                self.apply_edits(page, [(it["rect"], it["origin"], sz, it["color"], bold_var.get(), new, it.get("font"))])
+                page = self.doc[p]
+                self.apply_edits(page, edits)
                 self.dirty = True
-                self.refresh_pages([self.page_no])
+                self.refresh_pages([p])
                 self.status.set("수정했습니다. (Ctrl+Z 되돌리기, Ctrl+S 저장)")
             except Exception as ex:
                 messagebox.showerror(APP, f"수정 실패:\n{ex}")
@@ -6612,8 +6812,8 @@ class App:
         btns = ttk.Frame(frm)
         btns.pack(fill="x")
         ttk.Button(btns, text="취소", command=dlg.destroy).pack(side="right")
-        ttk.Button(btns, text="적용 (Enter)", command=ok).pack(side="right", padx=4)
-        ent.bind("<Return>", ok)
+        ttk.Button(btns, text="적용 (Ctrl+Enter)", command=ok).pack(side="right", padx=4)
+        txt.bind("<Control-Return>", lambda e: (ok(), "break")[1])
         dlg.bind("<Escape>", lambda e: dlg.destroy())
 
     # ---------- 색칠 · 감추기 · 메모 ----------
