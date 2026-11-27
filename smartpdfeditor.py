@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.33"
+APP_VER = "1.0.34"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -3336,9 +3336,8 @@ class App:
         self.tool_rbs = {}
         for k, _ in TOOLS:
             rb = ttk.Radiobutton(self.toolbtns, text=short[k], value=k, variable=self.mode, style="Toolbutton",
-                                 compound="top", command=self.on_mode)
-            rb._stack = True
-            self.set_icon(rb, "s_t_" + k, "top")
+                                 compound="image", command=self.on_mode)
+            self.set_icon(rb, "t_" + k, "top")
             rb.pack(side="left", padx=0)
             Tooltip(rb, tips[k])
             self.tool_rbs[k] = rb
@@ -4753,7 +4752,7 @@ class App:
         if pre:                                   # 아이콘 위·글자 아래 버튼(수정~이미지 변환): 작은 글자·좁은 여백
             fam_ = tkfont.nametofont("TkDefaultFont").actual()["family"]
             for k_ in ("TButton", "Toolbutton"):
-                st.configure("Stack." + pre + k_, padding=(2, 0, 2, 0), borderwidth=1, focuscolor="", font=(fam_, max(7, int(size) - 2)))
+                st.configure("Stack." + pre + k_, padding=(2, 0, 2, 0), borderwidth=1, focuscolor="", font=(fam_, max(7, int(size))))
         if not pre:
             st.configure(".", background=bg, foreground=fg, fieldbackground=field, bordercolor="#b9b9b9",
                          lightcolor=bg, darkcolor=bg, troughcolor=bg, selectbackground=ac, selectforeground=fg,
