@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.39"
+APP_VER = "1.0.40"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -7206,7 +7206,7 @@ class App:
         dlg = Popup(self.root)
         dlg.title("PDF 병합")
         dlg.transient(self.root)
-        dlg.minsize(1040, 580)
+        dlg.minsize(1040, 660)
         dlg.size_hint = (1240, 730)
         shown = {"i": None}            # 오른쪽이 지금 보여주는 파일 (같으면 다시 그리지 않아 선택·스크롤이 유지됨)
         sel = set()                    # 오른쪽에서 고른 쪽 (이 파일 안에서의 순번, 0부터)
@@ -7226,8 +7226,10 @@ class App:
 
         # ───────── 왼쪽: 파일 목록
         ttk.Label(left, text="합칠 파일 (위에서 아래 순서로 합쳐집니다)", font=("맑은 고딕", 9, "bold")).pack(anchor="w")
-        drop_v = tk.StringVar()
-        ttk.Label(left, textvariable=drop_v, foreground="#2b6cb0").pack(anchor="w")
+        drop_v = tk.StringVar(value="📥 PDF 파일·폴더를 여기에 끌어다 놓으세요")
+        dz = tk.Label(left, textvariable=drop_v, bg="#eaf3ff", fg="#2b6cb0", relief="groove", bd=2,
+                      font=("맑은 고딕", 10, "bold"), height=3, wraplength=360, justify="center")
+        dz.pack(fill="x", pady=(2, 4))
         bt = ttk.Frame(left)
         bt.pack(fill="x", pady=(4, 4))
         spf = ttk.LabelFrame(left, text=" 이 파일에서 가져올 쪽 ", padding=6)
@@ -7236,7 +7238,7 @@ class App:
         tf.pack(fill="both", expand=True)
         ft = ttk.Treeview(tf, columns=("no", "name", "cnt"), show="headings", selectmode="browse")
         for c, t, w, a, stt in (("no", "순서", 40, "center", False), ("name", "파일", 220, "w", True),
-                                ("cnt", "가져올 쪽", 100, "center", False)):
+                                ("cnt", "가져올 쪽 (더블클릭해서 입력)", 150, "center", False)):
             ft.heading(c, text=t)
             ft.column(c, width=w, anchor=a, stretch=stt)
         fsb = ttk.Scrollbar(tf, orient="vertical", command=ft.yview)
@@ -7252,6 +7254,20 @@ class App:
         sb.pack(fill="x", pady=(4, 0))
         ttk.Label(spf, text="예) 3, 1-2, 7-5   순서 마음대로 · 7-5처럼 거꾸로 · 같은 쪽 여러 번 가능\n비워 두고 [적용] = 전체 쪽",
                   foreground="#666", justify="left").pack(anchor="w", pady=(4, 0))
+        sv = ttk.Frame(spf)
+        sv.pack(fill="x", pady=(8, 0))
+        ttk.Separator(sv, orient="horizontal").pack(fill="x", pady=(0, 6))
+        pw1_v, pw2_v = tk.StringVar(), tk.StringVar()
+        r1 = ttk.Frame(sv)
+        r1.pack(fill="x")
+        ttk.Label(r1, text="🔒 저장 암호", width=11).pack(side="left")
+        ttk.Entry(r1, textvariable=pw1_v, show="●").pack(side="left", fill="x", expand=True)
+        r2 = ttk.Frame(sv)
+        r2.pack(fill="x", pady=(3, 0))
+        ttk.Label(r2, text="   암호 확인", width=11).pack(side="left")
+        ttk.Entry(r2, textvariable=pw2_v, show="●").pack(side="left", fill="x", expand=True)
+        ttk.Label(sv, text="암호를 비워 두면 암호 없이 저장됩니다.", foreground="#666").pack(anchor="w", pady=(2, 4))
+        ttk.Button(sv, text="💾 병합해서 저장...", command=lambda: do_merge()).pack(fill="x", ipady=4)
 
         # ───────── 오른쪽: 쪽 미리보기
         head_v = tk.StringVar(value="")
@@ -7363,10 +7379,17 @@ class App:
                                text="왼쪽에서 [➕ 파일 추가]로 PDF를 넣고\n파일을 고르면 여기에 쪽 미리보기가 보입니다.", justify="center")
                 return
             pgs = ents[i]["pages"]
+            mode = st.get("mode", 0)
+            if mode:                                           # 1·2·4쪽씩 보기: 창 너비에 맞춰 크기 결정
+                wv = max(300, tc.winfo_width() - 4)
+                tw = max(70, wv // mode - 22)
+                if mode == 1:
+                    tw = max(70, min(tw, int((max(300, tc.winfo_height()) - 60) / 1.42)))
+                st["tw"] = tw
             tw = st["tw"]
             th = int(tw * 1.42)
             cw, chh = tw + 22, th + 46
-            cols = max(1, max(tc.winfo_width(), cw) // cw)
+            cols = mode if mode else max(1, max(tc.winfo_width(), cw) // cw)
             st.update(cols=cols, cw=cw, ch=chh, th=th)
             rows = (len(pgs) + cols - 1) // cols
             total_h = rows * chh + 8
@@ -7402,7 +7425,8 @@ class App:
                 allp = pgs == list(range(len(e["doc"])))
                 nrot = sum(1 for _, d in e["pages"] if d)
                 ft.insert("", "end", iid=str(i), values=(
-                    i + 1, e["name"], ("전체 " if allp else "") + f"{len(pgs)}/{len(e['doc'])}쪽" + (" ⟳" if nrot else "")))
+                    i + 1, e["name"], ("전체 " + f"{len(pgs)}쪽" if allp else f"{fmt_pages(pgs)}  ({len(pgs)}/{len(e['doc'])}쪽)")
+                    + (" ⟳" if nrot else "")))
             if select is not None and 0 <= select < len(ents):
                 ft.selection_set(str(select))
                 ft.see(str(select))
@@ -7535,11 +7559,13 @@ class App:
 
         # ── 가져올 쪽 (글로 입력)
         def apply_spec(_=None):
-            i = cur()
+            set_spec(cur(), spec_v.get())
+
+        def set_spec(i, txt):
             if i is None:
                 return
             e = ents[i]
-            txt = spec_v.get().strip()
+            txt = (txt or "").strip()
             n = len(e["doc"])
             try:
                 pgs = list(range(n)) if not txt else parse_pages(txt, n, allow_dup=True)
@@ -7552,6 +7578,43 @@ class App:
             e["pages"] = [[p, old.get(p, 0)] for p in pgs]
             sel.clear()
             refresh_files(i)
+
+        def cell_edit(ev):
+            """파일 목록의 [가져올 쪽] 칸을 더블클릭하면 그 자리에서 바로 입력"""
+            if ft.identify_region(ev.x, ev.y) != "cell" or ft.identify_column(ev.x) != "#3":
+                return
+            iid = ft.identify_row(ev.y)
+            if not iid:
+                return
+            i = int(iid)
+            bb = ft.bbox(iid, "cnt")
+            if not bb:
+                return
+            ft.selection_set(iid)
+            e = ents[i]
+            pgs = [p for p, _ in e["pages"]]
+            v = tk.StringVar(value="" if pgs == list(range(len(e["doc"]))) else fmt_pages(pgs))
+            en = ttk.Entry(ft, textvariable=v)
+            en.place(x=bb[0] - 60, y=bb[1], width=bb[2] + 60, height=bb[3])
+            en.focus_set()
+            en.select_range(0, "end")
+            fin = {"d": False}
+
+            def ok(_=None):
+                if fin["d"]:
+                    return
+                fin["d"] = True
+                t = v.get()
+                en.destroy()
+                set_spec(i, t)
+
+            def cancel(_=None):
+                fin["d"] = True
+                en.destroy()
+            en.bind("<Return>", ok)
+            en.bind("<Escape>", lambda e_: (cancel(), "break")[1])
+            en.bind("<FocusOut>", lambda e_: ok())
+        ft.bind("<Double-Button-1>", cell_edit, add="+")
 
         def all_pages():
             spec_v.set("")
@@ -7699,6 +7762,15 @@ class App:
             ttk.Button(tb, text=txt, command=cmd).pack(side="left", padx=(0, 3))
         zoom_v = tk.IntVar(value=st["tw"])
         pend = {"id": None}
+        view_v = tk.IntVar(value=0)             # 0=자동(슬라이더) · 1·2·4 = 한 줄에 보이는 쪽 수
+
+        def on_view_mode():
+            st["mode"] = view_v.get()
+            if cur() is not None:
+                relayout(keep=False)
+        for txt_, val_ in (("4쪽", 4), ("2쪽", 2), ("1쪽", 1), ("자동", 0)):
+            ttk.Radiobutton(tb, text=txt_ + ("씩" if val_ else ""), value=val_, variable=view_v, command=on_view_mode).pack(side="right")
+        ttk.Label(tb, text="보기").pack(side="right", padx=(8, 3))
 
         def apply_zoom():
             pend["id"] = None
@@ -7706,6 +7778,9 @@ class App:
                 relayout(keep=True)
 
         def set_zoom(v):
+            if view_v.get():
+                view_v.set(0)
+                st["mode"] = 0
             v = int(max(70, min(480, v)))
             zoom_v.set(v)
             st["tw"] = v
@@ -7726,6 +7801,10 @@ class App:
         def on_cfg(_=None):
             i = cur()
             if i is None:
+                return
+            if st.get("mode"):                                 # 창 크기가 바뀌면 다시 맞춤 (모아서 한 번)
+                if st.get("rl") is None:
+                    st["rl"] = dlg.after(150, lambda: (st.__setitem__("rl", None), dlg.winfo_exists() and relayout(keep=True)))
                 return
             cols = max(1, max(tc.winfo_width(), st["cw"]) // st["cw"])
             if cols != st["cols"]:
@@ -7755,7 +7834,6 @@ class App:
             dlg.destroy()
         ttk.Label(bot, textvariable=sum_v).pack(side="left")
         ttk.Button(bot, text="취소", command=dlg.destroy).pack(side="right")
-        ttk.Button(bot, text="병합해서 저장...", command=do_merge).pack(side="right", padx=4)
 
         def toggle_full(_=None):
             try:
@@ -7768,13 +7846,9 @@ class App:
                     pass
             return "break"
         ttk.Button(bot, text="⛶ 전체 화면", command=toggle_full).pack(side="right", padx=(0, 14))
+        dlg.after(300, lambda: dlg.winfo_exists() and dlg.state() != "zoomed" and toggle_full())     # 처음부터 전체 화면
         dlg.bind("<F11>", toggle_full)
-        pw2_v = tk.StringVar()
-        ttk.Entry(bot, textvariable=pw2_v, show="●", width=10).pack(side="right")
-        ttk.Label(bot, text="확인").pack(side="right", padx=(6, 2))
-        pw1_v = tk.StringVar()
-        ttk.Entry(bot, textvariable=pw1_v, show="●", width=10).pack(side="right")
-        ttk.Label(bot, text="🔒 저장 암호 (비우면 없음)").pack(side="right", padx=(10, 2))
+
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         refresh_files()
 
@@ -7786,7 +7860,7 @@ class App:
                 dlg.after(150, hook_drop)
                 return
             if enable_file_drop(dlg, on_drop):
-                drop_v.set("📥 탐색기에서 PDF 파일·폴더를 이 창에 끌어다 놓아도 추가됩니다")
+                drop_v.set("📥 탐색기에서 PDF 파일·폴더를\n이 창에 끌어다 놓으면 목록에 추가됩니다")
         dlg.after(200, hook_drop)
         dlg.grab_set()
         dlg.wait_window()
