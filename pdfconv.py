@@ -116,7 +116,7 @@ def shrink_pdf(src_bytes, dst, level, progress=None, pages=None):
 
 # ──────────────────────────────────────────────────────────────
 # 1-2. 여러 PDF 합치기 (병합)
-def merge_pdfs(items, dst, progress=None):
+def merge_pdfs(items, dst, progress=None, password=None):
     """items = [{"path": 파일 경로 또는 "data": PDF 내용(bytes), "password": 암호(있으면), "pages": [(원본 쪽(0부터), 회전 각도), ...]}, ...]
     목록 순서대로, 각 항목의 pages 순서대로 한 PDF 로 합쳐 dst 에 저장. 합친 쪽 수 반환.
     같은 파일을 여러 항목에 넣어도 되고, 한 항목 안에서 쪽을 순서 없이/여러 번 넣어도 됩니다.
@@ -162,7 +162,11 @@ def merge_pdfs(items, dst, progress=None):
         _tick(progress, total, total, "저장 중...")
         tmp = dst + ".tmp"
         try:
-            out.save(tmp, garbage=3, deflate=True)
+            if password:
+                out.save(tmp, garbage=3, deflate=True, encryption=fitz.PDF_ENCRYPT_AES_256,
+                         user_pw=password, owner_pw=password)
+            else:
+                out.save(tmp, garbage=3, deflate=True)
         except Exception:
             try:
                 os.remove(tmp)
@@ -310,6 +314,41 @@ def _ocr_words_winrt(png):
     return rows
 
 
+def _enhance(pix):
+    """스캔 그림의 대비를 보정 (회색 배경은 하얗게, 흐린 글자는 진하게) → 글자 인식률이 오릅니다"""
+    try:
+        if pix.n != 1 or pix.alpha:
+            return pix
+        data = pix.samples
+        if len(data) < 1000:
+            return pix
+        step = max(1, len(data) // 400000)
+        hist = [0] * 256
+        for v in data[::step]:
+            hist[v] += 1
+        tot = sum(hist)
+        acc, lo, hi = 0, 0, 255
+        for v in range(256):                         # 어두운 쪽 0.5% / 밝은 쪽 값 = 종이(배경) 밝기
+            acc += hist[v]
+            if acc >= tot * 0.005:
+                lo = v
+                break
+        acc = 0
+        for v in range(255, -1, -1):
+            acc += hist[v]
+            if acc >= tot * 0.35:                    # 가장 밝은 35% 구간의 경계 = 종이 색
+                hi = v
+                break
+        if hi - lo < 40:
+            return pix
+        paper = max(lo + 40, hi - 8)                 # 이 밝기 이상은 모두 흰색 (얼룩·회색 배경 제거)
+        lut = bytes(0 if v <= lo else 255 if v >= paper else int(255 * ((v - lo) / (paper - lo)) ** 1.3)
+                    for v in range(256))
+        return fitz.Pixmap(fitz.csGRAY, pix.width, pix.height, data.translate(lut), False)
+    except Exception:
+        return pix
+
+
 def ocr_lines(page, engine, aux, dpi=300):
     """한 쪽을 글자 인식. 줄 목록 [{'bbox':(x0,y0,x1,y1), 'text':str, 'words':[(x0,y0,x1,y1,text)]}] (PDF 좌표, 단위 pt).
     좌표는 '쪽을 눈으로 본 방향(회전 반영)' 기준입니다."""
@@ -317,7 +356,7 @@ def ocr_lines(page, engine, aux, dpi=300):
     scale = dpi / 72.0
     if engine == "winrt":
         scale = min(scale, 2500.0 / max(r.width, r.height))
-    pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csGRAY, alpha=False)
+    pix = _enhance(page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csGRAY, alpha=False))
     fd, png = tempfile.mkstemp(suffix=".png")
     os.close(fd)
     try:

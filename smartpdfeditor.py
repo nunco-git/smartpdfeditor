@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.34"
+APP_VER = "1.0.35"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -6935,8 +6935,8 @@ class App:
         dlg = Popup(self.root)
         dlg.title("PDF 병합")
         dlg.transient(self.root)
-        dlg.minsize(940, 580)
-        dlg.size_hint = (1180, 730)
+        dlg.minsize(1040, 580)
+        dlg.size_hint = (1240, 730)
         shown = {"i": None}            # 오른쪽이 지금 보여주는 파일 (같으면 다시 그리지 않아 선택·스크롤이 유지됨)
         sel = set()                    # 오른쪽에서 고른 쪽 (이 파일 안에서의 순번, 0부터)
         st = {"anchor": None, "cols": 1, "cw": 168, "ch": 250, "th": 213, "tw": 150, "fill": None}
@@ -7426,15 +7426,31 @@ class App:
         for txt, cmd in (("▲ 쪽 앞으로", lambda: move_pages(-1)), ("▼ 쪽 뒤로", lambda: move_pages(+1)),
                          ("✖ 쪽 빼기", drop_pages), ("전체 선택", sel_all)):
             ttk.Button(tb, text=txt, command=cmd).pack(side="left", padx=(0, 3))
-        size_v = tk.StringVar(value="보통")
-        szc = ttk.Combobox(tb, textvariable=size_v, values=("작게", "보통", "크게"), width=5, state="readonly")
-        szc.pack(side="right")
+        zoom_v = tk.IntVar(value=st["tw"])
+        pend = {"id": None}
+
+        def apply_zoom():
+            pend["id"] = None
+            if cur() is not None:
+                relayout(keep=True)
+
+        def set_zoom(v):
+            v = int(max(70, min(480, v)))
+            zoom_v.set(v)
+            st["tw"] = v
+            if pend["id"] is None:                       # 끌고 있는 동안은 모아서 한 번에 다시 그림
+                pend["id"] = dlg.after(120, apply_zoom)
+        ttk.Button(tb, text="＋", width=3, command=lambda: set_zoom(st["tw"] + 30)).pack(side="right")
+        zs = ttk.Scale(tb, from_=70, to=480, orient="horizontal", length=130, variable=zoom_v,
+                       command=lambda v: set_zoom(float(v)))
+        zs.pack(side="right", padx=2)
+        ttk.Button(tb, text="－", width=3, command=lambda: set_zoom(st["tw"] - 30)).pack(side="right")
         ttk.Label(tb, text="미리보기 크기").pack(side="right", padx=(0, 4))
 
-        def on_size(_=None):
-            st["tw"] = {"작게": 100, "보통": 150, "크게": 220}[size_v.get()]
-            relayout(keep=True)
-        szc.bind("<<ComboboxSelected>>", on_size)
+        def on_wheel_zoom(e):
+            set_zoom(st["tw"] + (20 if e.delta > 0 else -20))
+            return "break"
+        tc.bind("<Control-MouseWheel>", on_wheel_zoom)
 
         def on_cfg(_=None):
             i = cur()
@@ -7454,17 +7470,40 @@ class App:
         ft.bind("<<TreeviewSelect>>", lambda e: (sel.clear(), spec_sync(), relayout()) if cur() != shown["i"] else None)
         ft.bind("<Delete>", lambda e: remove())
 
-        go = {"v": False}
+        go = {"v": False, "pw": ""}
 
         def do_merge():
             if not ents or not sum(len(e["pages"]) for e in ents):
                 messagebox.showinfo(APP, "합칠 PDF를 먼저 추가해주세요.", parent=dlg)
                 return
+            if pw1_v.get() != pw2_v.get():
+                messagebox.showwarning(APP, "저장 암호와 확인 암호가 서로 다릅니다.", parent=dlg)
+                return
+            go["pw"] = pw1_v.get()
             go["v"] = True
             dlg.destroy()
         ttk.Label(bot, textvariable=sum_v).pack(side="left")
         ttk.Button(bot, text="취소", command=dlg.destroy).pack(side="right")
         ttk.Button(bot, text="병합해서 저장...", command=do_merge).pack(side="right", padx=4)
+
+        def toggle_full(_=None):
+            try:
+                full = dlg.state() == "zoomed"
+                dlg.state("normal" if full else "zoomed")
+            except tk.TclError:
+                try:
+                    dlg.attributes("-zoomed", not dlg.attributes("-zoomed"))
+                except tk.TclError:
+                    pass
+            return "break"
+        ttk.Button(bot, text="⛶ 전체 화면", command=toggle_full).pack(side="right", padx=(0, 14))
+        dlg.bind("<F11>", toggle_full)
+        pw2_v = tk.StringVar()
+        ttk.Entry(bot, textvariable=pw2_v, show="●", width=10).pack(side="right")
+        ttk.Label(bot, text="확인").pack(side="right", padx=(6, 2))
+        pw1_v = tk.StringVar()
+        ttk.Entry(bot, textvariable=pw1_v, show="●", width=10).pack(side="right")
+        ttk.Label(bot, text="🔒 저장 암호 (비우면 없음)").pack(side="right", padx=(10, 2))
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         refresh_files()
 
@@ -7515,8 +7554,8 @@ class App:
             elif err:
                 messagebox.showerror(APP, f"병합 실패:\n{err}")
             else:
-                self._after_make(out, f"{len(snap)}개 파일을 합쳐 {res}쪽 PDF를 만들었습니다", openable=True)
-        self._run_job("PDF 병합", lambda pr: pdfconv.merge_pdfs(snap, out, pr), done)
+                self._after_make(out, f"{len(snap)}개 파일을 합쳐 {res}쪽 PDF를 만들었습니다" + (" (암호 설정됨)" if go["pw"] else ""), openable=True)
+        self._run_job("PDF 병합", lambda pr: pdfconv.merge_pdfs(snap, out, pr, go["pw"] or None), done)
 
     def shrink_dialog(self):
         if not self.doc:
