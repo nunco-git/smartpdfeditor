@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.43"
+APP_VER = "1.0.44"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -5837,8 +5837,64 @@ class App:
                         "origin": fitz.Point(first["origin"]),
                         "font": first["font"],
                     })
+        self._fix_garbled(p, page, items)
         self.items_cache[p] = items
         return items
+
+    @staticmethod
+    def _is_garbled(t):
+        t = t.strip()
+        if not t:
+            return False
+        ok = 0
+        for c in t:
+            o = ord(c)
+            if (0x20 <= o < 0x7F) or 0xAC00 <= o <= 0xD7A3 or 0x3131 <= o <= 0x318E \
+                    or 0x4E00 <= o <= 0x9FFF or o in (0xB7, 0x2022, 0x25CB, 0x25A1, 0x2018, 0x2019, 0x201C, 0x201D, 0x2013, 0x2014, 0x2026, 0xFF08, 0xFF09):
+                ok += 1
+        return ok / len(t) < 0.6
+
+    def _fix_garbled(self, p, page, items):
+        """글꼴에 유니코드 표가 없어 글자가 깨진 줄은 화면을 글자 인식해서 올바른 글자로 바꿔 보여줌"""
+        bad = [it for it in items if self._is_garbled(it["text"])]
+        if not bad or page.rotation:
+            return
+        try:
+            import pdfconv
+            if not hasattr(self, "_ocr_eng"):
+                self._ocr_eng = pdfconv.ocr_engine()
+            eng, _, aux = self._ocr_eng
+            if not eng:
+                return
+            try:
+                self.root.config(cursor="watch"); self.root.update_idletasks()
+            except Exception:
+                pass
+            lines = pdfconv.ocr_lines(page, eng, aux, dpi=250, deskew=False)
+            words = [w for L in lines for w in L["words"]]
+            for it in bad:
+                r = it["rect"]
+                hit = []
+                for (x0, y0, x1, y1, t) in words:
+                    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+                    if r.x0 - 1 <= cx <= r.x1 + 1 and r.y0 - 1 <= cy <= r.y1 + 1:
+                        hit.append((x0, x1, t))
+                if not hit:
+                    continue
+                hit.sort()
+                out = hit[0][2]
+                for a, b in zip(hit, hit[1:]):
+                    out += (" " if b[0] - a[1] > it["size"] * 0.2 else "") + b[2]
+                it["text"] = out
+                it["ocr"] = True
+                it["font"] = ""                       # 깨진 글꼴은 쓰지 않고 기본 한글 글꼴로 (크기·색은 그대로)
+        except Exception:
+            pass
+        finally:
+            try:
+                self.root.config(cursor="")
+            except Exception:
+                pass
 
     @staticmethod
     def _join_spans(g):
