@@ -1219,3 +1219,122 @@ def convert(src_bytes, dst, fmt, pages=None, use_ocr=True, progress=None, title=
         raise ValueError(fmt)
     ntbl = sum(1 for p in pg for b in p["blocks"] if b["t"] == "tbl")
     return len(pg), ntbl, notes
+
+
+# ──────────────────────────────────────────────────────────────
+# 제목 찾기 → 자동 북마크(목차)
+# ──────────────────────────────────────────────────────────────
+_NUM_PAT = re.compile(
+    r"^\s*(제\s*\d+\s*[편장절조항관]|[IVXⅠ-Ⅹ]+[.)]|\d+(\.\d+)+\.?\s|\d+[.)]\s*\S|[가-힣][.)]\s*\S|\(\s*\d+\s*\)|\(\s*[가-힣]\s*\)|"
+    r"[○□■▣◆◇●▶▷◎※▪❍ㅇ]\s*\S|[①-⑩])")
+
+
+def collect_lines(src_bytes, progress=None):
+    """모든 쪽의 줄(글자 크기·굵기·위치)을 모음. 반환: (줄 목록, 본문 글자 크기, 쪽 수)
+    줄: {"p": 쪽(0부터), "y": 위치(0~1), "x": 왼쪽 위치(0~1), "text", "size", "bold"}"""
+    doc = fitz.open("pdf", src_bytes)
+    try:
+        if doc.needs_pass:
+            raise ValueError("암호가 걸린 PDF 입니다.")
+        n = len(doc)
+        lines = []
+        weight = {}
+        for pi in range(n):
+            _tick(progress, pi, n, f"제목 찾는 중... ({pi + 1}/{n}쪽)")
+            pg = doc[pi]
+            rot = pg.rotation
+            if rot:
+                pg.set_rotation(0)
+            try:
+                d = pg.get_text("dict")
+            finally:
+                if rot:
+                    pg.set_rotation(rot)
+            H, W = max(1.0, pg.rect.height), max(1.0, pg.rect.width)
+            for b in d.get("blocks", []):
+                if b.get("type") != 0:
+                    continue
+                for ln in b["lines"]:
+                    sp = [x for x in ln["spans"] if x["text"].strip()]
+                    if not sp or abs(ln.get("dir", (1, 0))[1]) > 0.01:
+                        continue
+                    text = "".join(x["text"] for x in ln["spans"]).strip()
+                    text = re.sub(r"\s+", " ", text)
+                    size = max(x["size"] for x in sp)
+                    nch = sum(len(x["text"].strip()) for x in sp)
+                    bold_ch = sum(len(x["text"].strip()) for x in sp if (x["flags"] & 16) or "bold" in x["font"].lower()
+                                  or "black" in x["font"].lower() or "heavy" in x["font"].lower())
+                    key = round(size * 2) / 2
+                    weight[key] = weight.get(key, 0) + nch
+                    lines.append({"p": pi, "y": ln["bbox"][1] / H, "yb": ln["bbox"][3] / H, "x": ln["bbox"][0] / W, "text": text,
+                                  "size": size, "bold": bold_ch >= nch * 0.6, "nch": nch, "h": H})
+        body = max(weight, key=weight.get) if weight else 10.0
+        return lines, body, n
+    finally:
+        doc.close()
+
+
+def detect_headings(lines, body, npages, use_bold=True, use_number=True, max_levels=3, min_ratio=1.12):
+    """collect_lines 결과에서 제목 줄을 골라 단계(1~max_levels)를 매김. 반환: [{"p","y","text","level"}]"""
+    if not lines:
+        return []
+    # 쪽마다 반복되는 머리말·꼬리말은 제외
+    cnt = {}
+    for L in lines:
+        k = re.sub(r"\d+", "#", L["text"])
+        cnt.setdefault(k, set()).add(L["p"])
+    rep = {k for k, v in cnt.items() if npages >= 4 and len(v) >= max(3, npages * 0.3)}
+    cand = []
+    for L in lines:
+        t = L["text"]
+        if not (2 <= len(t) <= 90):
+            continue
+        if re.fullmatch(r"[-–—\s\d/·.()\[\]페이지쪽pP]*", t):          # 쪽 번호 같은 것
+            continue
+        if re.sub(r"\d+", "#", t) in rep:
+            continue
+        if L["y"] < 0.04 or L["yb"] > 0.965:                              # 맨 위·맨 아래 띠
+            continue
+        big = L["size"] >= body * min_ratio
+        num = bool(_NUM_PAT.match(t))
+        ok = big or (use_bold and L["bold"] and len(t) <= 60 and L["size"] >= body * 0.98) \
+            or (use_number and num and L["bold"])
+        if not ok:
+            continue
+        if not big and not L["bold"]:
+            continue
+        if len(t) > 45 and re.search(r"(다|요|음|함|임)[.,]?$", t) and not num and not big:
+            continue                                                       # 문장(본문)처럼 길게 끝나는 줄
+        cand.append(dict(L, num=num, big=big))
+    # 같은 글자 크기로 바로 이어지는 제목 줄은 한 제목으로 합침
+    merged = []
+    for L in cand:
+        if merged:
+            M = merged[-1]
+            if (M["p"] == L["p"] and abs(M["size"] - L["size"]) < 0.6 and 0 <= (L["y"] - M["yb"]) * M["h"] < M["size"] * 0.9
+                    and not L["num"] and abs(M["x"] - L["x"]) < 0.25 and len(M["text"]) < 70):
+                M["text"] = (M["text"] + " " + L["text"]).strip()
+                M["yb"] = L["yb"]
+                continue
+        merged.append(dict(L))
+    # 글자 크기(굵기) 순서로 단계 매기기: 큰 것이 1단계
+    sizes = sorted({(round(L["size"] * 2) / 2, L["bold"]) for L in merged}, key=lambda z: (-z[0], not z[1]))
+    rank = {}
+    for z in sizes:
+        rank[z] = min(len(rank), max_levels - 1)
+    # 너무 많은 종류면 비슷한 크기(1pt 이내)는 같은 단계로
+    out = []
+    for L in merged:
+        lv = rank[(round(L["size"] * 2) / 2, L["bold"])] + 1
+        m = re.match(r"^\s*(\d+(?:\.\d+)+)", L["text"])
+        if m:                                                              # 1.1 / 1.1.1 번호 깊이를 단계에 반영
+            lv = max(lv, min(max_levels, m.group(1).count(".") + 1))
+        elif re.match(r"^\s*제\s*\d+\s*[편장]", L["text"]):
+            lv = 1
+        out.append({"p": L["p"], "y": max(0.0, min(1.0, L["y"])), "text": L["text"], "level": min(lv, max_levels), "size": L["size"]})
+    # 첫 제목은 1단계로 시작해야 하고, 단계가 두 칸 이상 건너뛰지 않게
+    prev = 0
+    for h in out:
+        h["level"] = min(h["level"], prev + 1)
+        prev = h["level"]
+    return out

@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.42"
+APP_VER = "1.0.43"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -3122,7 +3122,7 @@ class App:
                 pr["update_avail"] = box["info"]
                 self.update_info = box["info"]
                 self.show_update_btn()
-                if pr.get("update_notified") != box["info"]["version"]:      # 새 버전은 처음 한 번 알림창도 띄움
+                if box["info"] and pr.get("update_notified") != box["info"]["version"]:      # 새 버전은 처음 한 번 알림창도 띄움
                     pr["update_notified"] = box["info"]["version"]
                     self.root.after(600, self.show_update)
         self.root.after(500, wait)
@@ -3475,6 +3475,7 @@ class App:
                        image=self.menu_icon("star"), compound="left")
         bm.add_command(label="북마크 추가", accelerator="Ctrl+B", command=self.add_bookmark_now,
                        image=self.menu_icon("bookmark"), compound="left")
+        bm.add_command(label="자동 북마크 만들기 (제목·소제목 찾기)...", command=self.auto_bookmark_dialog)
         bm.add_separator()
         bm.add_command(label="즐겨찾기 보기", command=lambda: self.show_side(self.fav_panel))
         bm.add_command(label="북마크 보기", command=lambda: self.show_side(self.bm_panel))
@@ -6733,6 +6734,229 @@ class App:
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         fill()
         dlg.grab_set()
+
+    def auto_bookmark_dialog(self):
+        """각 쪽의 제목·소제목을 글자 크기·굵기·번호로 찾아 목차(북마크)를 자동으로 만듦"""
+        if not self.doc:
+            messagebox.showinfo(APP, "먼저 PDF를 열어주세요.")
+            return
+        import pdfconv
+        data = self.doc.tobytes()
+        npg = len(self.doc)
+
+        def done(res, err):
+            if err == "cancel":
+                self.status.set("취소했습니다.")
+            elif err:
+                messagebox.showerror(APP, f"제목 찾기 실패:\n{err}")
+            else:
+                self._auto_bm_window(res[0], res[1], res[2])
+        self._run_job("제목 찾는 중", lambda pr: pdfconv.collect_lines(data, pr), done)
+
+    def _auto_bm_window(self, lines, body, n):
+        import pdfconv
+        if not lines:
+            messagebox.showinfo(APP, "글자를 찾지 못했습니다. (스캔 이미지 PDF는 먼저 [스캔본 글자 인식]을 해 주세요.)")
+            return
+        dlg = Popup(self.root)
+        dlg.title("자동 북마크 만들기")
+        dlg.transient(self.root)
+        dlg.minsize(760, 520)
+        dlg.size_hint = (900, 680)
+        heads = []
+        o_bold, o_num = tk.BooleanVar(value=True), tk.BooleanVar(value=True)
+        o_lv = tk.IntVar(value=3)
+        top = ttk.Frame(dlg, padding=(10, 8, 10, 0))
+        top.pack(fill="x")
+        ttk.Label(top, text=f"본문 글자 크기 약 {body:.1f}pt 보다 큰 글자·굵은 글자·번호(1. / 1.1 / 가. 등)로 제목을 찾았습니다.",
+                  foreground="#555").pack(anchor="w")
+        op = ttk.Frame(top)
+        op.pack(fill="x", pady=(4, 0))
+        ttk.Checkbutton(op, text="굵은 글자도 제목으로", variable=o_bold, command=lambda: redo()).pack(side="left")
+        ttk.Checkbutton(op, text="번호로 시작하는 굵은 줄도 포함", variable=o_num, command=lambda: redo()).pack(side="left", padx=10)
+        ttk.Label(op, text="최대 단계").pack(side="left", padx=(10, 3))
+        sp = ttk.Spinbox(op, from_=1, to=5, width=3, textvariable=o_lv, command=lambda: redo())
+        sp.pack(side="left")
+        sp.bind("<Return>", lambda e: redo())
+        cnt_v = tk.StringVar()
+        ttk.Label(op, textvariable=cnt_v, foreground="#c0392b").pack(side="right")
+        mid = ttk.Frame(dlg, padding=10)
+        mid.pack(fill="both", expand=True)
+        tv = ttk.Treeview(mid, columns=("on", "pg", "lv", "title"), show="headings", selectmode="extended")
+        for c, t, w, a, st_ in (("on", "넣기", 50, "center", False), ("pg", "쪽", 50, "center", False),
+                                ("lv", "단계", 50, "center", False), ("title", "제목 (단계별로 들여쓰기)", 600, "w", True)):
+            tv.heading(c, text=t)
+            tv.column(c, width=w, anchor=a, stretch=st_)
+        tv.tag_configure("off", foreground="#aaa")
+        vs = ttk.Scrollbar(mid, orient="vertical", command=tv.yview)
+        tv.configure(yscrollcommand=vs.set)
+        tv.pack(side="left", fill="both", expand=True)
+        vs.pack(side="left", fill="y")
+        ef = ttk.Frame(dlg, padding=(10, 0, 10, 4))
+        ef.pack(fill="x")
+        ttk.Label(ef, text="제목 고치기").pack(side="left")
+        ev = tk.StringVar()
+        ent = ttk.Entry(ef, textvariable=ev)
+        ent.pack(side="left", fill="x", expand=True, padx=6)
+        ttk.Button(ef, text="◀ 단계 올리기", command=lambda: shift(-1)).pack(side="left", padx=(0, 3))
+        ttk.Button(ef, text="단계 내리기 ▶", command=lambda: shift(+1)).pack(side="left", padx=(0, 3))
+        ttk.Button(ef, text="넣기/빼기", command=lambda: toggle()).pack(side="left")
+        ttk.Label(dlg, text="목록에서 줄을 누르고 제목을 고치거나(Enter), 단계를 바꾸거나, 필요 없는 줄은 [넣기/빼기]로 제외하세요. 여러 줄을 함께 고를 수 있습니다.",
+                  foreground="#666", padding=(10, 0, 10, 4)).pack(anchor="w")
+        bot = ttk.Frame(dlg, padding=(10, 4, 10, 10))
+        bot.pack(fill="x")
+
+        def refresh_row(i):
+            h = heads[i]
+            tv.item(str(i), values=("✔" if h["on"] else "", h["p"] + 1, h["level"], "    " * (h["level"] - 1) + h["text"]),
+                    tags=() if h["on"] else ("off",))
+
+        def count():
+            cnt_v.set(f"북마크 {sum(1 for h in heads if h['on'])}개")
+
+        def fill():
+            tv.delete(*tv.get_children())
+            for i, h in enumerate(heads):
+                tv.insert("", "end", iid=str(i), values=("", "", "", ""))
+                refresh_row(i)
+            count()
+
+        def redo():
+            try:
+                lv = max(1, min(5, int(o_lv.get())))
+            except (tk.TclError, ValueError):
+                lv = 3
+            heads[:] = [dict(h, on=True) for h in pdfconv.detect_headings(lines, body, n, o_bold.get(), o_num.get(), lv)]
+            fill()
+            if not heads:
+                cnt_v.set("찾은 제목이 없습니다 — [굵은 글자도 제목으로]를 켜 보세요")
+
+        def sel_idx():
+            return [int(x) for x in tv.selection()]
+
+        def on_sel(_=None):
+            ix = sel_idx()
+            if len(ix) == 1:
+                ev.set(heads[ix[0]]["text"])
+        tv.bind("<<TreeviewSelect>>", on_sel)
+
+        def commit(_=None):
+            ix = sel_idx()
+            if len(ix) == 1 and ev.get().strip():
+                heads[ix[0]]["text"] = ev.get().strip()
+                refresh_row(ix[0])
+                nxt = str(ix[0] + 1)
+                if tv.exists(nxt):
+                    tv.selection_set(nxt)
+                    tv.see(nxt)
+            return "break"
+        ent.bind("<Return>", commit)
+
+        def shift(d):
+            for i in sel_idx():
+                heads[i]["level"] = max(1, min(8, heads[i]["level"] + d))
+                refresh_row(i)
+
+        def toggle():
+            ix = sel_idx()
+            if not ix:
+                return
+            val = not all(heads[i]["on"] for i in ix)
+            for i in ix:
+                heads[i]["on"] = val
+                refresh_row(i)
+            count()
+        tv.bind("<Double-Button-1>", lambda e: toggle() if tv.identify_column(e.x) == "#1" else None)
+        tv.bind("<space>", lambda e: (toggle(), "break")[1])
+
+        def chosen():
+            out, prev = [], 0
+            for h in heads:
+                if h["on"]:
+                    lv = min(h["level"], prev + 1)               # 단계가 두 칸 이상 건너뛰지 않게
+                    out.append(dict(h, level=lv))
+                    prev = lv
+            return out
+
+        def to_pdf():
+            ch = chosen()
+            if not ch:
+                messagebox.showinfo(APP, "넣을 제목이 없습니다.", parent=dlg)
+                return
+            if self.doc.get_toc() and not messagebox.askyesno(
+                    APP, "이 PDF에는 이미 목차(책갈피)가 있습니다.\n새로 찾은 제목으로 바꿀까요?", parent=dlg):
+                return
+            dlg.destroy()
+            try:
+                self.push_undo()
+                toc = []
+                for h in ch:
+                    H = self.doc[h["p"]].rect.height
+                    toc.append([h["level"], h["text"][:200], h["p"] + 1,
+                                {"kind": 1, "to": fitz.Point(0, max(0.0, h["y"] * H - 4)), "zoom": 0}])
+                self.doc.set_toc(toc)
+                self.dirty = True
+                self.status.set(f"PDF 목차(책갈피) {len(toc)}개를 넣었습니다. 저장(Ctrl+S)하면 파일에 들어갑니다. (Ctrl+Z 되돌리기)")
+            except Exception as ex:
+                messagebox.showerror(APP, f"목차를 넣지 못했습니다:\n{ex}")
+
+        def to_panel():
+            ch = chosen()
+            if not ch:
+                messagebox.showinfo(APP, "넣을 제목이 없습니다.", parent=dlg)
+                return
+            if not self.path:
+                messagebox.showinfo(APP, "저장된 파일만 북마크로 넣을 수 있습니다. 먼저 저장해 주세요.", parent=dlg)
+                return
+            lim = self.limit("bm_max")
+            have = count_items(self.conf["bookmarks"])
+            if have + len(ch) > lim and not messagebox.askyesno(
+                    APP, f"북마크는 최대 {lim}개 설정인데 지금 {have}개 + 새 {len(ch)}개가 됩니다.\n그래도 넣을까요?\n"
+                    "(최대 개수는 [설정 → 환경설정]에서 바꿀 수 있습니다)", parent=dlg):
+                return
+            dlg.destroy()
+            name = os.path.splitext(os.path.basename(self.path))[0] + " 목차"
+            root_f = {"type": "folder", "name": name, "open": True, "children": [], "path": self.path}
+            root_nodes = self._bm_tree(ch)
+            root_f["children"] = root_nodes
+            self.conf["bookmarks"].append(root_f)
+            self.persist()
+            self.bm_panel.refresh()
+            self.show_side(self.bm_panel)
+            self.status.set(f"북마크 패널에 '{name}' 폴더로 {len(ch)}개를 넣었습니다.")
+        ttk.Button(bot, text="닫기", command=dlg.destroy).pack(side="right")
+        ttk.Button(bot, text="북마크 패널에 추가", command=to_panel).pack(side="right", padx=4)
+        ttk.Button(bot, text="PDF 목차(책갈피)로 넣기", command=to_pdf).pack(side="right")
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        redo()
+        dlg.grab_set()
+
+    def _bm_tree(self, ch):
+        """단계가 있는 제목 목록 → 북마크 트리 (하위 제목이 있는 제목은 폴더, 맨 앞에 자기 자신으로 가는 북마크)"""
+        def mk(h):
+            return {"type": "mark", "name": h["text"][:80], "path": self.path, "page": h["p"], "added": time.time(),
+                    "pos": round(h["y"], 4) or 0.0001}
+        out = []
+
+        def build(i, lv):
+            """i 부터 단계 lv 인 제목들을 만들어 목록으로, 다음 위치를 돌려줌"""
+            res = []
+            while i < len(ch) and ch[i]["level"] >= lv:
+                h = ch[i]
+                if h["level"] > lv:                      # 단계 건너뜀 (방어)
+                    i += 1
+                    continue
+                if i + 1 < len(ch) and ch[i + 1]["level"] > lv:
+                    kids, j = build(i + 1, lv + 1)
+                    res.append({"type": "folder", "name": h["text"][:80], "open": False, "path": self.path,
+                                "children": [mk(dict(h, text="▶ " + h["text"]))] + kids})
+                    i = j
+                else:
+                    res.append(mk(h))
+                    i += 1
+            return res, i
+        res, _ = build(0, 1)
+        return res
 
     def edit_dialog(self, it, p=None):
         """글자 수정: 누른 글자가 든 문단 전체(여러 줄)를 한 창에 열어서 고침. 줄 수가 같으면 줄마다 제자리에,
