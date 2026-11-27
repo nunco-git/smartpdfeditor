@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.38"
+APP_VER = "1.0.39"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -3221,6 +3221,7 @@ class App:
         fm.add_command(label="워드·엑셀·한글 문서로 내보내기...", command=self.export_dialog)
         fm.add_command(label="그림 파일로 변환 (PNG·JPG)...", command=self.images_dialog)
         fm.add_command(label="스캔본 글자 인식 (검색되는 PDF로)...", command=self.ocr_dialog)
+        fm.add_command(label="글자 인식 프로그램(Tesseract) 설치...", command=self.install_ocr)
         fm.add_separator()
         fm.add_command(label="탭 닫기", accelerator="Ctrl+W", command=lambda: self.close_tab(self.tab))
         fm.add_command(label="종료", command=self.on_close)
@@ -8021,11 +8022,43 @@ class App:
                     messagebox.showinfo(APP, f"{len(res)}장을 저장했습니다.\n\n{folder}")
         self._run_job("그림으로 저장 중", lambda pr: pdfconv.render_pages(data, folder, base, pages, f, d, pr), done)
 
+    def install_ocr(self, then=None):
+        """Tesseract(더 정확한 글자 인식 프로그램) 자동 설치. 끝나면 then() 실행"""
+        import pdfconv
+        if not pdfconv.IS_WIN:
+            messagebox.showinfo(APP, "자동 설치는 Windows 에서만 됩니다.")
+            return
+
+        def dl(url, limit):
+            return net_request(url, headers={"User-Agent": f"smartpdfeditor/{APP_VER}"}, limit=limit, timeout=300)
+
+        def done(res, err):
+            if err == "cancel":
+                self.status.set("설치를 취소했습니다.")
+            elif err:
+                messagebox.showerror(APP, f"글자 인식 프로그램 설치 실패:\n{err}\n\n(지금 쓰는 Windows 기본 글자 인식은 계속 쓸 수 있습니다.)")
+            else:
+                messagebox.showinfo(APP, f"설치했습니다: {res}\n이제 글자 인식이 더 정확해집니다.")
+                if then:
+                    then()
+        self._run_job("글자 인식 프로그램 설치", lambda pr: pdfconv.install_tesseract(dl, pr), done)
+
     def ocr_dialog(self):
         if not self.doc:
             return
         import pdfconv
         eng, desc, _aux = pdfconv.ocr_engine()
+        if pdfconv.IS_WIN and not (eng == "tesseract" and "한글" in desc) and not self.conf["prefs"].get("no_ocr_ask"):
+            ans = messagebox.askyesnocancel(APP, "더 정확한 글자 인식 프로그램(Tesseract + 한글 데이터, 약 60MB)이 설치돼 있지 않습니다.\n"
+                                            "지금 자동으로 설치할까요?\n(인터넷 연결이 필요하고, 관리자 권한 확인 창이 뜰 수 있습니다)\n\n"
+                                            "[예] 설치   [아니요] 지금 있는 기본 인식으로 진행(다음부터 묻지 않음)   [취소] 그만두기")
+            if ans is None:
+                return
+            if ans:
+                self.install_ocr(then=self.ocr_dialog)
+                return
+            self.conf["prefs"]["no_ocr_ask"] = True
+            save_conf(self.conf)
         if not eng:
             messagebox.showwarning(APP, desc)
             return

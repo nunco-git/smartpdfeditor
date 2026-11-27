@@ -46,10 +46,12 @@ SHRINK_LEVELS = {
     "조금 줄이기 (화질 거의 그대로)": (220, 170, 85),
     "많이 줄이기 (보통 화질)": (160, 130, 70),
     "최대로 줄이기 (화질 낮음)": (110, 96, 50),
+    "더 줄이기 (화질 매우 낮음)": (90, 72, 32),
+    "극한으로 줄이기 (흑백·글자만 알아볼 정도)": (70, 55, 22, True),
 }
 
 
-def _shrink_images_fallback(doc, thr, target, quality, pages=None):
+def _shrink_images_fallback(doc, thr, target, quality, pages=None, gray=False):
     """rewrite_images 가 없는 구버전 PyMuPDF 용: 그림을 하나씩 줄여서 교체"""
     done = set()
     for pi, page in enumerate(doc):
@@ -66,14 +68,16 @@ def _shrink_images_fallback(doc, thr, target, quality, pages=None):
                     continue
                 if pix.colorspace and pix.colorspace.n not in (1, 3):
                     pix = fitz.Pixmap(fitz.csRGB, pix)
+                if gray and pix.colorspace and pix.colorspace.n == 3:
+                    pix = fitz.Pixmap(fitz.csGRAY, pix)           # 흑백으로 바꾸면 용량이 크게 줄어듦
                 rects = page.get_image_rects(xref)
                 if not rects:
                     continue
                 w_in = max(r.width for r in rects) / 72.0
                 dpi = pix.width / w_in if w_in > 0 else 0
-                if dpi <= thr:
+                if dpi <= thr and not (gray and pix.colorspace and pix.colorspace.n == 3):
                     continue
-                f = target / dpi
+                f = min(1.0, target / dpi)
                 small = fitz.Pixmap(pix, max(1, int(pix.width * f)), max(1, int(pix.height * f)), None)
                 data = small.tobytes("jpeg", jpg_quality=quality)
                 page.replace_image(xref, stream=data)
@@ -83,19 +87,26 @@ def _shrink_images_fallback(doc, thr, target, quality, pages=None):
 
 def shrink_pdf(src_bytes, dst, level, progress=None, pages=None):
     """src_bytes(PDF 내용) 을 줄여서 dst 에 저장. (줄이기 전 크기, 줄인 뒤 크기) 반환"""
-    thr, target, q = SHRINK_LEVELS[level]
+    thr, target, q, *rest = SHRINK_LEVELS[level]
+    gray = bool(rest and rest[0])
     doc = fitz.open("pdf", src_bytes)
     before = len(src_bytes)
     try:
         if doc.needs_pass:
             raise ValueError("암호가 걸린 PDF 입니다.")
         _tick(progress, 0, 3, "그림 줄이는 중...")
-        if pages is None and hasattr(doc, "rewrite_images"):
+        if pages is None and hasattr(doc, "rewrite_images") and not gray:
             doc.rewrite_images(dpi_threshold=thr, dpi_target=target, quality=q,
                                lossy=True, lossless=True, bitonal=True, color=True, gray=True)
         else:
-            _shrink_images_fallback(doc, thr, target, q, None if pages is None else set(pages))
+            _shrink_images_fallback(doc, thr, target, q, None if pages is None else set(pages), gray)
         _tick(progress, 1, 3, "불필요한 데이터 정리 중...")
+        if rest:                                  # 가장 센 단계: 썸네일·메타데이터 등 군더더기도 제거
+            try:
+                doc.scrub(metadata=True, thumbnails=True, xml_metadata=True, attached_files=False,
+                          embedded_files=False, hidden_text=False, redactions=False, remove_links=False)
+            except Exception:
+                pass
         try:
             doc.subset_fonts()                  # fontTools 가 있을 때만 동작
         except Exception:
@@ -183,6 +194,82 @@ def merge_pdfs(items, dst, progress=None, password=None):
 # ──────────────────────────────────────────────────────────────
 # 2. 글자 인식(OCR)
 # ──────────────────────────────────────────────────────────────
+TESS_HOME = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "SmartPDFEditor", "tesseract")
+_TESS_LIST_URL = "https://digi.bib.uni-mannheim.de/tesseract/"
+_TESS_FALLBACK = "tesseract-ocr-w64-setup-5.5.0.20241111.exe"
+_KOR_URLS = ("https://github.com/tesseract-ocr/tessdata_best/raw/main/kor.traineddata",
+             "https://github.com/tesseract-ocr/tessdata_fast/raw/main/kor.traineddata")
+
+
+def install_tesseract(download, progress=None):
+    """Windows 에 Tesseract(글자 인식 프로그램)와 한글 데이터를 내려받아 설치. download(url, limit) -> bytes.
+    설치 위치: %LOCALAPPDATA%\\SmartPDFEditor\\tesseract. 성공하면 엔진 설명을 돌려줌"""
+    if not IS_WIN:
+        raise RuntimeError("자동 설치는 Windows 에서만 됩니다. 사용하는 시스템에서 tesseract 와 한글(kor) 데이터를 설치해 주세요.")
+    _tick(progress, 0, 10, "설치 파일을 찾는 중...")
+    name = _TESS_FALLBACK
+    try:
+        html = download(_TESS_LIST_URL, 5 * 1024 * 1024).decode("utf-8", "replace")
+        found = [n for n in set(re.findall(r"tesseract-ocr-w64-setup-[0-9][0-9.]*\.exe", html))]
+        if found:
+            name = max(found, key=lambda n: [int(x) for x in re.findall(r"\d+", n)])
+    except Exception:
+        pass
+    _tick(progress, 1, 10, "글자 인식 프로그램 내려받는 중... (약 50MB, 잠시 걸립니다)")
+    try:
+        data = download(_TESS_LIST_URL + name, 300 * 1024 * 1024)
+    except Exception as e:
+        raise RuntimeError(f"설치 파일을 내려받지 못했습니다. 인터넷(외부 접속)이 막혀 있을 수 있습니다.\n{e}")
+    if len(data) < 5 * 1024 * 1024 or data[:2] != b"MZ":
+        raise RuntimeError("내려받은 설치 파일이 올바르지 않습니다.")
+    tmpd = tempfile.mkdtemp(prefix="spe_tess_")
+    setup = os.path.join(tmpd, name)
+    with open(setup, "wb") as f:
+        f.write(data)
+    _tick(progress, 5, 10, "설치하는 중... (관리자 권한 확인 창이 뜨면 [예]를 눌러 주세요)")
+    os.makedirs(os.path.dirname(TESS_HOME), exist_ok=True)
+    args = ["/S", "/D=" + TESS_HOME]                    # /D= 는 반드시 마지막, 따옴표 없이
+    try:
+        r = subprocess.run([setup] + args, timeout=900, **_NOWIN)
+        code = r.returncode
+    except OSError as e:
+        if getattr(e, "winerror", 0) == 740:           # 관리자 권한이 필요한 설치 파일 → 권한 상승으로 다시
+            ps = ("$p = Start-Process -FilePath '%s' -ArgumentList '/S','/D=%s' -Verb RunAs -Wait -PassThru; exit $p.ExitCode"
+                  % (setup.replace("'", "''"), TESS_HOME.replace("'", "''")))
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, timeout=900, **_NOWIN)
+            code = r.returncode
+        else:
+            raise
+    exe = os.path.join(TESS_HOME, "tesseract.exe")
+    if code != 0 or not os.path.exists(exe):
+        raise RuntimeError("설치가 끝나지 않았습니다. (관리자 권한 확인 창에서 [아니오]를 눌렀거나, 기관 보안 프로그램이 막았을 수 있습니다.)")
+    _tick(progress, 7, 10, "한글 인식 데이터 내려받는 중...")
+    td = os.path.join(TESS_HOME, "tessdata")
+    os.makedirs(td, exist_ok=True)
+    last = None
+    for u in _KOR_URLS:
+        try:
+            kd = download(u, 100 * 1024 * 1024)
+            if len(kd) > 500 * 1024:
+                with open(os.path.join(td, "kor.traineddata"), "wb") as f:
+                    f.write(kd)
+                last = None
+                break
+        except Exception as e:
+            last = e
+    if last is not None or not os.path.exists(os.path.join(td, "kor.traineddata")):
+        raise RuntimeError(f"한글 인식 데이터를 내려받지 못했습니다.\n{last or ''}")
+    try:
+        shutil.rmtree(tmpd, ignore_errors=True)
+    except Exception:
+        pass
+    _tick(progress, 10, 10, "완료")
+    eng, desc, _aux = ocr_engine()
+    if eng != "tesseract":
+        raise RuntimeError("설치는 됐지만 한글 인식 엔진을 찾지 못했습니다.")
+    return desc
+
+
 def _tess_candidates():
     here = os.path.dirname(os.path.abspath(getattr(sys, "frozen", False) and sys.executable or __file__))
     c = []
@@ -190,6 +277,7 @@ def _tess_candidates():
     if p:
         c.append(p)
     c.append(os.path.join(here, "tesseract", "tesseract.exe"))
+    c.append(os.path.join(TESS_HOME, "tesseract.exe"))
     if IS_WIN:
         for env in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
             b = os.environ.get(env)
