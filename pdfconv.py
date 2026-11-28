@@ -51,6 +51,102 @@ SHRINK_LEVELS = {
 }
 
 
+SHRINK_SHORT = {          # 저장 파일 이름에 붙일 짧은 옵션 이름
+    "조금 줄이기": "조금", "많이 줄이기": "많이", "최대로 줄이기": "최대", "더 줄이기": "더", "극한으로 줄이기": "극한",
+}
+
+
+def shrink_short(level):
+    base = level.split(" (")[0].strip()
+    return SHRINK_SHORT.get(base, re.sub(r"[\\/:*?\"<>|\s]", "", base)[:6] or "줄임")
+
+
+def estimate_shrink(src_bytes, pages=None, progress=None, sample=10):
+    """각 단계로 줄였을 때의 예상 크기 {단계이름: 바이트}. 큰 그림 몇 장을 실제로 줄여 보고 나머지는 그 비율로 추정.
+    (글자·글꼴 등은 그대로로 보므로 ±오차가 있는 '예상'입니다)"""
+    doc = fitz.open("pdf", src_bytes)
+    before = len(src_bytes)
+    try:
+        if doc.needs_pass:
+            raise ValueError("암호가 걸린 PDF 입니다.")
+        imgs, seen = [], set()
+        for pi in range(len(doc)):
+            if pages is not None and pi not in pages:
+                continue
+            page = doc[pi]
+            for img in page.get_images(full=True):
+                xref = img[0]
+                if xref in seen:
+                    continue
+                seen.add(xref)
+                try:
+                    if img[1]:                                   # 마스크가 붙은 그림은 줄이지 않음
+                        continue
+                    rects = page.get_image_rects(xref)
+                    if not rects:
+                        continue
+                    w_in = max(r.width for r in rects) / 72.0
+                    raw = len(doc.xref_stream_raw(xref) or b"")
+                    imgs.append({"xref": xref, "orig": raw, "w": img[2], "dpi": (img[2] / w_in) if w_in > 0 else 0})
+                except Exception:
+                    continue
+        imgs.sort(key=lambda d: -d["orig"])
+        samp = imgs[:sample]
+        pix_cache = {}
+        out = {}
+        for li, (name, spec) in enumerate(SHRINK_LEVELS.items()):
+            _tick(progress, li, len(SHRINK_LEVELS), f"예상 크기 계산 중... ({li + 1}/{len(SHRINK_LEVELS)})")
+            thr, target, q, *rest = spec
+            gray = bool(rest and rest[0])
+            tot_old = tot_new = 0.0
+            ratio_old = ratio_new = 0.0
+            for d in imgs:
+                chg = d["dpi"] > thr or gray
+                if not chg or d["dpi"] <= 0:
+                    tot_old += d["orig"]
+                    tot_new += d["orig"]
+                    continue
+                if d in samp:
+                    try:
+                        pix = pix_cache.get(d["xref"])
+                        if pix is None:
+                            pix = fitz.Pixmap(doc, d["xref"])
+                            if pix.alpha:
+                                raise ValueError
+                            if pix.colorspace and pix.colorspace.n not in (1, 3):
+                                pix = fitz.Pixmap(fitz.csRGB, pix)
+                            pix_cache[d["xref"]] = pix
+                        p2 = pix
+                        if gray and p2.colorspace and p2.colorspace.n == 3:
+                            p2 = fitz.Pixmap(fitz.csGRAY, p2)
+                        f = min(1.0, target / d["dpi"])
+                        small = fitz.Pixmap(p2, max(1, int(p2.width * f)), max(1, int(p2.height * f)), None)
+                        new = len(small.tobytes("jpeg", jpg_quality=q))
+                    except Exception:
+                        tot_old += d["orig"]
+                        tot_new += d["orig"]
+                        continue
+                    tot_old += d["orig"]
+                    tot_new += new
+                    ratio_old += d["orig"]
+                    ratio_new += new
+                else:
+                    tot_old += d["orig"]
+                    tot_new += -1 * d["orig"]                    # 아래에서 비율로 채움
+            r = (ratio_new / ratio_old) if ratio_old else 1.0
+            est_new = 0.0
+            for d in imgs:
+                pass
+            # 표본이 아닌 줄일 그림은 표본 비율로 추정
+            extra_old = sum(d["orig"] for d in imgs if d not in samp and (d["dpi"] > thr or gray) and d["dpi"] > 0)
+            base_new = tot_new + extra_old                       # -orig 로 넣어 둔 값을 되돌림
+            est_new = base_new + extra_old * r
+            out[name] = int(max(before * 0.02, before - tot_old + est_new))
+        return out
+    finally:
+        doc.close()
+
+
 def _shrink_images_fallback(doc, thr, target, quality, pages=None, gray=False, progress=None):
     """rewrite_images 가 없는 구버전 PyMuPDF 용: 그림을 하나씩 줄여서 교체"""
     done = set()

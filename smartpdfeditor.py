@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.50"
+APP_VER = "1.0.51"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -8498,8 +8498,46 @@ class App:
         ttk.Label(frm, text="사진·스캔 그림의 해상도를 낮춰서 용량을 줄입니다.\n(글자는 그대로 유지됩니다. 원본은 그대로 두고 새 파일로 저장)",
                   foreground="#555").pack(anchor="w", pady=(2, 8))
         lv = tk.StringVar(value=list(pdfconv.SHRINK_LEVELS)[1])
+        radios = {}
         for k in pdfconv.SHRINK_LEVELS:
-            ttk.Radiobutton(frm, text=k, value=k, variable=lv).pack(anchor="w")
+            rb = ttk.Radiobutton(frm, text=k + "   → 예상 크기 계산 중...", value=k, variable=lv)
+            rb.pack(anchor="w")
+            radios[k] = rb
+        ttk.Label(frm, text="※ 예상 크기는 그림을 실제로 줄여 보고 추정한 값입니다 (전체 쪽 기준, 실제와 다를 수 있음)",
+                  foreground="#888").pack(anchor="w", pady=(2, 0))
+        est_box = {"res": None, "err": None, "done": False}
+        try:
+            est_data = self.doc.tobytes()
+            cur_size = len(est_data)
+        except Exception:
+            est_data, cur_size = None, 0
+
+        def est_work():
+            try:
+                est_box["res"] = pdfconv.estimate_shrink(est_data)
+            except Exception as ex:
+                est_box["err"] = ex
+            est_box["done"] = True
+        if est_data:
+            threading.Thread(target=est_work, daemon=True).start()
+        else:
+            est_box["done"] = True
+
+        def est_poll():
+            if not dlg.winfo_exists():
+                return
+            if not est_box["done"]:
+                dlg.after(200, est_poll)
+                return
+            res = est_box["res"]
+            for k, rb in radios.items():
+                if res and k in res and cur_size:
+                    v = res[k]
+                    pct = max(0, 100.0 * (cur_size - v) / cur_size)
+                    rb.configure(text=f"{k}   → 예상 약 " + (f"{v / 1048576:.1f} MB" if v >= 1048576 else f"{v / 1024:.0f} KB") + f" ({pct:.0f}% 감소)")
+                else:
+                    rb.configure(text=k)
+        dlg.after(200, est_poll)
         ttk.Label(frm, text="줄일 쪽 (선택한 쪽의 그림만 줄이고, 나머지 쪽은 그대로 둡니다)").pack(anchor="w", pady=(10, 0))
         rbox, rget = self._page_range_box(frm, True)
         rbox.pack(anchor="w")
@@ -8520,11 +8558,11 @@ class App:
         dlg.wait_window()
         if not go["v"]:
             return
-        out = self._ask_out("_용량줄임", ".pdf", "PDF")
+        level = lv.get()
+        out = self._ask_out("_용량줄임_" + pdfconv.shrink_short(level), ".pdf", "PDF")
         if not out:
             return
         data = self.doc.tobytes()
-        level = lv.get()
         sel_pages = go["pages"] if len(go["pages"]) < len(self.doc) else None
 
         def done(res, err):
