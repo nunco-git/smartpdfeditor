@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.48"
+APP_VER = "1.0.49"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -7786,8 +7786,9 @@ class App:
         dz.pack(fill="x", pady=(2, 4))
         bt = ttk.Frame(left)
         bt.pack(fill="x", pady=(4, 4))
-        spf = ttk.LabelFrame(left, text=" 이 파일에서 가져올 쪽 ", padding=6)
+        spf = ttk.Frame(left)
         spf.pack(side="bottom", fill="x", pady=(6, 0))
+        hid = ttk.Frame(left)                    # 쪽 입력칸은 목록 안에서 직접 입력하므로 화면에는 표시하지 않음
         tf = ttk.Frame(left)
         tf.pack(fill="both", expand=True)
         ft = ttk.Treeview(tf, columns=("no", "name", "cnt"), show="headings", selectmode="browse")
@@ -7802,14 +7803,10 @@ class App:
 
         spec_v = tk.StringVar()
         sum_v = tk.StringVar()
-        se = ttk.Entry(spf, textvariable=spec_v)
-        se.pack(fill="x")
-        sb = ttk.Frame(spf)
-        sb.pack(fill="x", pady=(4, 0))
-        ttk.Label(spf, text="예) 3, 1-2, 7-5   순서 마음대로 · 7-5처럼 거꾸로 · 같은 쪽 여러 번 가능\n비워 두고 [적용] = 전체 쪽",
-                  foreground="#666", justify="left").pack(anchor="w", pady=(4, 0))
+        se = ttk.Entry(hid, textvariable=spec_v)
+        sb = ttk.Frame(hid)
         sv = ttk.Frame(spf)
-        sv.pack(fill="x", pady=(8, 0))
+        sv.pack(fill="x", pady=(2, 0))
         ttk.Separator(sv, orient="horizontal").pack(fill="x", pady=(0, 6))
         pw1_v, pw2_v = tk.StringVar(), tk.StringVar()
         r1 = ttk.Frame(sv)
@@ -8153,7 +8150,7 @@ class App:
             pgs = [p for p, _ in e["pages"]]
             v = tk.StringVar(value="" if pgs == list(range(len(e["doc"]))) else fmt_pages(pgs))
             en = ttk.Entry(ft, textvariable=v)
-            en.place(x=bb[0] - 60, y=bb[1], width=bb[2] + 60, height=bb[3])
+            en.place(x=bb[0], y=bb[1], width=bb[2], height=bb[3])
             en.focus_set()
             en.select_range(0, "end")
             fin = {"d": False}
@@ -8314,13 +8311,15 @@ class App:
         for txt, cmd in (("⟲ 왼쪽 90°", lambda: rotate(-90)), ("⟳ 오른쪽 90°", lambda: rotate(90)),
                          ("↻ 180°", lambda: rotate(180)), ("회전 없애기", lambda: rotate(None))):
             ttk.Button(tb, text=txt, command=cmd).pack(side="left", padx=(0, 3))
+        ttk.Label(tb, text="※ Ctrl을 누르고 쪽을 선택하면 복수 선택 및 일괄 회전 가능", foreground="#c0392b",
+                  font=("맑은 고딕", 9)).pack(side="left", padx=(6, 0))
         ttk.Separator(tb, orient="vertical").pack(side="left", fill="y", padx=4)
         for txt, cmd in (("▲ 쪽 앞으로", lambda: move_pages(-1)), ("▼ 쪽 뒤로", lambda: move_pages(+1)),
                          ("✖ 쪽 빼기", drop_pages), ("전체 선택", sel_all)):
             ttk.Button(tb, text=txt, command=cmd).pack(side="left", padx=(0, 3))
         zoom_v = tk.IntVar(value=st["tw"])
         pend = {"id": None}
-        view_v = tk.IntVar(value=0)             # 0=자동(슬라이더) · 1·2·4 = 한 줄에 보이는 쪽 수
+        view_v = tk.IntVar(value=2)             # 0=자동(슬라이더) · 1·2·4 = 한 줄에 보이는 쪽 수
 
         def on_view_mode():
             st["mode"] = view_v.get()
@@ -8344,12 +8343,7 @@ class App:
             st["tw"] = v
             if pend["id"] is None:                       # 끌고 있는 동안은 모아서 한 번에 다시 그림
                 pend["id"] = dlg.after(120, apply_zoom)
-        ttk.Button(tb, text="＋", width=3, command=lambda: set_zoom(st["tw"] + 30)).pack(side="right")
-        zs = ttk.Scale(tb, from_=70, to=480, orient="horizontal", length=130, variable=zoom_v,
-                       command=lambda v: set_zoom(float(v)))
-        zs.pack(side="right", padx=2)
-        ttk.Button(tb, text="－", width=3, command=lambda: set_zoom(st["tw"] - 30)).pack(side="right")
-        ttk.Label(tb, text="미리보기 크기").pack(side="right", padx=(0, 4))
+        st["mode"] = 2                                   # 미리보기 기본 = 2쪽씩
 
         def on_wheel_zoom(e):
             set_zoom(st["tw"] + (20 if e.delta > 0 else -20))
