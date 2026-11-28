@@ -763,7 +763,7 @@ def _table_cells(page, t):
                     break
             if r1 > r or c1 > c:
                 merges.append((r, c, r1, c1))
-    return rows, merges
+    return rows, merges, [xs0[c] for c in sorted(xs0)]
 
 
 def _image_bytes(doc, xref):
@@ -819,6 +819,55 @@ def _merge_wrapped(blocks):
     return out
 
 
+class _Pages(list):
+    orig_n = 0
+
+
+def _join_page_tables(res, notes=None):
+    """여러 쪽에 걸쳐 이어지는 표(같은 칸 구조, 앞 쪽 표가 쪽 아래까지·다음 쪽 표가 쪽 위에서 시작)를 하나의 표로 합침.
+    다음 쪽에서 반복되는 제목 줄은 한 번만 남기고, 쪽 위·아래의 머리글/쪽번호 글은 표 안으로 끌어오지 않음"""
+    prev = None                     # 이어붙일 수 있는 마지막 표 (표 블록, 그 표가 끝난 쪽 번호)
+    for pi, pg in enumerate(res):
+        bl = pg["blocks"]
+        tbls = [b for b in bl if b["t"] == "tbl"]
+        if prev is not None and tbls and prev[1] == pi - 1:
+            t0, last = tbls[0], prev[0]
+            ph = pg.get("h") or t0.get("ph") or 800
+            ok = (t0.get("xs") and last.get("xs") and len(t0["xs"]) == len(last["xs"])
+                  and all(abs(a - b) <= 6 for a, b in zip(t0["xs"], last["xs"]))
+                  and t0["bbox"][1] < ph * 0.25 and last["bbox"][3] > last.get("ph", ph) * 0.8
+                  and all(b is t0 or b["t"] != "tbl" for b in bl[:bl.index(t0) + 1]))
+            if ok:
+                rows = t0["rows"]
+                merges = list(t0.get("merges", []))
+                if last["rows"] and rows and [c.strip() for c in rows[0]] == [c.strip() for c in last["rows"][0]]:
+                    rows = rows[1:]                         # 다음 쪽에 반복된 제목 줄
+                    merges = [(a - 1, b, c - 1, d) for (a, b, c, d) in merges if a >= 1]
+                    last["hdr"] = 1
+                off = len(last["rows"])
+                last["rows"] = last["rows"] + rows
+                last["merges"] = list(last.get("merges", [])) + [(a + off, b, c + off, d) for (a, b, c, d) in merges]
+                last["bbox"] = t0["bbox"]
+                last["ph"] = t0.get("ph", ph)
+                # 표 위(머리글)에 있던 글은 버리고, 표는 합쳐졌으므로 이 쪽에서 제거
+                k = bl.index(t0)
+                pg["blocks"] = [b for j, b in enumerate(bl) if j > k]
+                pg["joined"] = True
+                if notes is not None:
+                    notes.append(f"{pi}~{pi + 1}쪽에 걸친 표를 하나로 합쳤습니다")
+                after = [b for b in tbls[1:]]
+                prev = (last, pi) if not after else None
+                if after:
+                    prev = (after[-1], pi) if after[-1]["bbox"][3] > after[-1].get("ph", ph) * 0.8 else None
+                    # 이 쪽의 마지막 표가 쪽 끝에 걸치면 다음 쪽으로 이어질 수 있음
+                continue
+        prev = None
+        if tbls:
+            lt = tbls[-1]
+            if lt["bbox"][3] > lt.get("ph", 800) * 0.8:
+                prev = (lt, pi)
+
+
 def extract_pages(src_bytes, pages=None, use_ocr=True, want_images=True, progress=None):
     doc = fitz.open("pdf", src_bytes)
     res = []
@@ -845,11 +894,12 @@ def extract_pages(src_bytes, pages=None, use_ocr=True, want_images=True, progres
             items = []                                   # (y0, x0, block)
             for t in tables:
                 try:
-                    rows, merges = _table_cells(page, t)
+                    rows, merges, xs = _table_cells(page, t)
                 except Exception:
                     continue
                 if rows and any(any(c for c in r) for r in rows):
-                    items.append((t.bbox[1], t.bbox[0], {"t": "tbl", "rows": rows, "merges": merges}))
+                    items.append((t.bbox[1], t.bbox[0], {"t": "tbl", "rows": rows, "merges": merges,
+                                                                  "bbox": tuple(t.bbox), "xs": xs, "ph": pr.height}))
             d = page.get_text("dict", flags=fitz.TEXT_PRESERVE_IMAGES | fitz.TEXT_PRESERVE_WHITESPACE
                               if want_images else fitz.TEXT_PRESERVE_WHITESPACE)
             has_text = False
@@ -921,7 +971,12 @@ def extract_pages(src_bytes, pages=None, use_ocr=True, want_images=True, progres
             res.append({"w": pr.width, "h": pr.height, "no": i + 1, "blocks": blocks})
     finally:
         doc.close()
+    n_orig = len(res)
+    _join_page_tables(res, notes)
+    res[:] = [p_ for p_ in res if p_['blocks'] or not p_.get('joined')]      # 표로 합쳐져 비게 된 쪽은 뺌
     _tick(progress, 1, 1, "저장 중...")
+    res = _Pages(res)
+    res.orig_n = n_orig
     return res, notes
 
 
@@ -1315,7 +1370,7 @@ def save_hwpx(pages, dst, title=""):
                 rh = 2200
                 tid = 1000000 + len(paras)
                 x = [f'<hp:run charPrIDRef="0"><hp:tbl id="{tid}" zOrder="{len(paras)}" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" '
-                     f'textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="0" rowCnt="{len(rows)}" '
+                     f'textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="{1 if bk.get('hdr') else 0}" rowCnt="{len(rows)}" '
                      f'colCnt="{len(ws)}" cellSpacing="0" borderFillIDRef="2" noAdjust="0">'
                      f'<hp:sz width="{sum(grid)}" widthRelTo="ABSOLUTE" height="{rh * len(rows)}" heightRelTo="ABSOLUTE" protect="0"/>'
                      '<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" '
@@ -1331,7 +1386,7 @@ def save_hwpx(pages, dst, title=""):
                         rs, cs = head.get((ri, c), (1, 1))
                         t = r[c] if c < len(r) else ""
                         run = f'<hp:run charPrIDRef="{small}"><hp:t>{_x(t)}</hp:t></hp:run>' if t else f'<hp:run charPrIDRef="{small}"/>'
-                        x.append('<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="2">'
+                        x.append(f'<hp:tc name="" header="{1 if (bk.get("hdr") and ri == 0) else 0}" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="2">'
                                  '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" '
                                  'linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
                                  f'<hp:p id="2147483648" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">{run}</hp:p></hp:subList>'
@@ -1414,7 +1469,7 @@ def convert(src_bytes, dst, fmt, pages=None, use_ocr=True, progress=None, title=
     else:
         raise ValueError(fmt)
     ntbl = sum(1 for p in pg for b in p["blocks"] if b["t"] == "tbl")
-    return len(pg), ntbl, notes
+    return getattr(pg, 'orig_n', len(pg)), ntbl, notes
 
 
 # ──────────────────────────────────────────────────────────────
