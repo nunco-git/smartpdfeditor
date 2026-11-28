@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.49"
+APP_VER = "1.0.50"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -6804,7 +6804,6 @@ class App:
                 self.status.set(f"{len(pages)}개 쪽, {n}곳을 고쳤습니다. (Ctrl+Z 되돌리기, Ctrl+S 저장)")
             except Exception as ex:
                 messagebox.showerror(APP, f"수정 실패:\n{ex}")
-        ttk.Button(bot, text="취소", command=dlg.destroy).pack(side="right")
         ttk.Button(bot, text="모두 적용", command=apply_all).pack(side="right", padx=4)
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         fill()
@@ -7646,15 +7645,15 @@ class App:
             messagebox.showerror(APP, f"저장 실패:\n{ex}")
 
     # ---------- 용량 줄이기 / 다른 형식으로 내보내기 / 글자 인식 ----------
-    def _run_job(self, title, work, done):
+    def _run_job(self, title, work, done, parent=None):
         """오래 걸리는 일을 따로 돌리고 진행 창을 보여줌. work(progress) -> 결과, done(결과, 오류)"""
         import queue
         import pdfconv
         q = queue.Queue()
         cancel = {"v": False}
-        dlg = Popup(self.root)
+        dlg = Popup(parent or self.root)
         dlg.title(title)
-        dlg.transient(self.root)
+        dlg.transient(parent or self.root)
         dlg.resizable(False, False)
         frm = ttk.Frame(dlg, padding=12)
         frm.pack()
@@ -7818,7 +7817,10 @@ class App:
         ttk.Label(r2, text="   암호 확인", width=11).pack(side="left")
         ttk.Entry(r2, textvariable=pw2_v, show="●").pack(side="left", fill="x", expand=True)
         ttk.Label(sv, text="암호를 비워 두면 암호 없이 저장됩니다.", foreground="#666").pack(anchor="w", pady=(2, 4))
-        ttk.Button(sv, text="💾 병합해서 저장...", command=lambda: do_merge()).pack(fill="x", ipady=4)
+        mb = ttk.Frame(sv)
+        mb.pack(fill="x")
+        ttk.Button(mb, text="💾 병합해서 저장...", command=lambda: do_merge()).pack(side="left", fill="x", expand=True, ipady=4)
+        ttk.Button(mb, text="창 닫기", command=lambda: dlg.destroy()).pack(side="left", padx=(4, 0), ipady=4)
 
         # ───────── 오른쪽: 쪽 미리보기
         head_v = tk.StringVar(value="")
@@ -7826,6 +7828,7 @@ class App:
         hdr.pack(fill="x")
         fs_btn = ttk.Button(hdr, text="⛶ 전체 화면", command=lambda: toggle_full())
         fs_btn.pack(side="right")
+        ttk.Button(hdr, text="✖ 닫기", command=lambda: dlg.destroy()).pack(side="right", padx=(0, 4))
         ttk.Label(hdr, textvariable=head_v, font=("맑은 고딕", 9, "bold")).pack(side="left", anchor="w")
         tb = ttk.Frame(right)
         tb.pack(fill="x", pady=(4, 4))
@@ -8375,15 +8378,44 @@ class App:
         go = {"v": False, "pw": ""}
 
         def do_merge():
+            """병합해서 저장. 끝나도 병합 창은 닫지 않고 그대로 둠 (계속 고쳐서 다시 저장 가능)"""
             if not ents or not sum(len(e["pages"]) for e in ents):
                 messagebox.showinfo(APP, "합칠 PDF를 먼저 추가해주세요.", parent=dlg)
                 return
             if pw1_v.get() != pw2_v.get():
                 messagebox.showwarning(APP, "저장 암호와 확인 암호가 서로 다릅니다.", parent=dlg)
                 return
-            go["pw"] = pw1_v.get()
-            go["v"] = True
-            dlg.destroy()
+            pw_ = pw1_v.get()
+            snap = [{"name": e["name"], "path": e["path"], "data": e["data"], "password": e["password"],
+                     "pages": [tuple(x) for x in e["pages"]]} for e in ents]
+            first = next((e["path"] for e in snap if e["path"]), None) or self.path
+            initdir = os.path.dirname(first) if first else desktop_dir()
+            out = filedialog.asksaveasfilename(parent=dlg, defaultextension=".pdf", filetypes=[("PDF", "*.pdf")],
+                                               initialdir=initdir, initialfile="병합.pdf", title="합친 PDF 저장")
+            if not out:
+                return
+            used = {os.path.normcase(os.path.abspath(e["path"])) for e in snap if e["path"]}
+            used |= {os.path.normcase(os.path.abspath(t.path)) for t in self.tabs if t.path}
+            if os.path.normcase(os.path.abspath(out)) in used:
+                messagebox.showwarning(APP, "합치는 파일이나 열려 있는 파일과 같은 이름으로는 저장할 수 없습니다.\n다른 이름으로 저장해주세요.", parent=dlg)
+                return
+
+            def done(res, err):
+                try:
+                    if dlg.winfo_exists():
+                        dlg.grab_set()
+                except tk.TclError:
+                    return
+                if err == "cancel":
+                    self.status.set("취소했습니다.")
+                elif err:
+                    messagebox.showerror(APP, f"병합 실패:\n{err}", parent=dlg)
+                else:
+                    text = f"{len(snap)}개 파일을 합쳐 {res}쪽 PDF를 만들었습니다" + (" (암호 설정됨)" if pw_ else "")
+                    self.status.set(f"{text}: {out}")
+                    if messagebox.askyesno(APP, f"{text}\n\n{out}\n\n새 탭으로 열어볼까요?\n(병합 창은 그대로 유지됩니다)", parent=dlg):
+                        self.open_file(out)
+            self._run_job("PDF 병합", lambda pr: pdfconv.merge_pdfs(snap, out, pr, pw_ or None), done, parent=dlg)
         ttk.Label(bot, textvariable=sum_v).pack(side="left")
         ttk.Button(bot, text="취소", command=dlg.destroy).pack(side="right")
 
@@ -8394,14 +8426,19 @@ class App:
             fs["on"] = not fs["on"]
             try:
                 dlg.attributes("-fullscreen", fs["on"])
+                if not fs["on"]:
+                    dlg.state("zoomed")            # 전체 화면을 풀면 제목줄(✕)이 보이는 최대화 창으로
             except tk.TclError:
-                try:
-                    dlg.state("zoomed" if fs["on"] else "normal")
-                except tk.TclError:
-                    pass
+                pass
             fs_btn.configure(text="🗗 전체화면 해제" if fs["on"] else "⛶ 전체 화면")
             return "break"
-        dlg.after(300, lambda: dlg.winfo_exists() and not fs["on"] and toggle_full())     # 처음부터 전체 화면
+
+        def start_max():                           # 처음에는 제목줄(✕)이 보이는 최대화 창
+            try:
+                dlg.state("zoomed")
+            except tk.TclError:
+                pass
+        dlg.after(300, lambda: dlg.winfo_exists() and start_max())
         dlg.bind("<F11>", toggle_full)
 
         dlg.bind("<Escape>", lambda e: dlg.destroy())
@@ -8417,6 +8454,16 @@ class App:
             if enable_file_drop(dlg, on_drop):
                 drop_v.set("📥 탐색기에서 PDF 파일·폴더를\n이 창에 끌어다 놓으면 목록에 추가됩니다")
         dlg.after(200, hook_drop)
+        try:                                        # 환경설정의 테마·미리보기 배경색을 병합 창에도 적용
+            tbg = self.tcolor("bg")
+            if tbg:
+                dlg.configure(bg=tbg)
+            self.assign_top_styles(dlg)
+            tc.configure(bg=self.tcolor("canvas") or "#5a5a5a", highlightbackground=self.tcolor("shadow") or "#3c3c3c")
+            if self.tcolor("accent"):
+                dz.configure(bg=self._tint(self.tcolor("accent"), 0.7), fg=self.tcolor("fg") or "#2b6cb0")
+        except tk.TclError:
+            pass
         dlg.grab_set()
         dlg.wait_window()
         if st["fill"] is not None:
@@ -8425,8 +8472,6 @@ class App:
             except Exception:
                 pass
 
-        snap = [{"name": e["name"], "path": e["path"], "data": e["data"], "password": e["password"],
-                 "pages": [tuple(x) for x in e["pages"]]} for e in ents]
         thumbs.clear()
         on_cv.clear()
         for d in {id(e["doc"]): e["doc"] for e in ents}.values():      # 같은 PDF를 여러 번 넣었어도 한 번만 닫음
@@ -8434,28 +8479,6 @@ class App:
                 d.close()
             except Exception:
                 pass
-        if not go["v"] or not snap:
-            return
-        first = next((e["path"] for e in snap if e["path"]), None) or self.path
-        initdir = os.path.dirname(first) if first else desktop_dir()
-        out = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF", "*.pdf")], initialdir=initdir,
-                                           initialfile="병합.pdf", title="합친 PDF 저장")
-        if not out:
-            return
-        used = {os.path.normcase(os.path.abspath(e["path"])) for e in snap if e["path"]}
-        used |= {os.path.normcase(os.path.abspath(t.path)) for t in self.tabs if t.path}
-        if os.path.normcase(os.path.abspath(out)) in used:
-            messagebox.showwarning(APP, "합치는 파일이나 열려 있는 파일과 같은 이름으로는 저장할 수 없습니다.\n다른 이름으로 저장해주세요.")
-            return
-
-        def done(res, err):
-            if err == "cancel":
-                self.status.set("취소했습니다.")
-            elif err:
-                messagebox.showerror(APP, f"병합 실패:\n{err}")
-            else:
-                self._after_make(out, f"{len(snap)}개 파일을 합쳐 {res}쪽 PDF를 만들었습니다" + (" (암호 설정됨)" if go["pw"] else ""), openable=True)
-        self._run_job("PDF 병합", lambda pr: pdfconv.merge_pdfs(snap, out, pr, go["pw"] or None), done)
 
     def shrink_dialog(self):
         if not self.doc:
