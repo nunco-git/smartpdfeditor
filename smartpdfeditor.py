@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.47"
+APP_VER = "1.0.48"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -3022,6 +3022,7 @@ class App:
         self.sizes = []          # 쪽별 (폭, 높이) pt, 회전 반영
         self.slots = {}          # 쪽번호 → (x, y, w, h) 화면 위치
         self.imgs = {}           # 쪽번호 → PhotoImage (보이는 쪽만)
+        self._ph_lru = {}        # 방금 지나친 쪽 그림 (최대 6장)
         self.view = pr.get("view", "cont") if pr.get("view") in VIEW_COLS else "cont"
         self.view_var = tk.StringVar(value=VIEW_LABEL[self.view])
         self.fit = tk.StringVar(value=pr.get("fit", "width"))   # custom / width / height
@@ -4156,6 +4157,7 @@ class App:
             self.remember_page()
             self.cv.delete("all")
             self.imgs.clear()
+            self._ph_lru.clear()
         self.tab = t
         try:
             self.bm_panel.refresh()                 # 북마크 탭: 고른 파일의 북마크만
@@ -5580,6 +5582,7 @@ class App:
         if not self.doc:
             self.cv.delete("all")
             self.imgs.clear()
+            self._ph_lru.clear()
             return
         yfrac, xfrac = self.cv.yview()[0], self.cv.xview()[0]
         self.page_no = min(self.page_no, len(self.doc) - 1)
@@ -5591,6 +5594,7 @@ class App:
         self.zoom = self.calc_zoom()          # (화면 크기를 읽느라 화면이 한 번 갱신됨 → 지우기 전에)
         self.cv.delete("all")
         self.imgs.clear()
+        self._ph_lru.clear()
         self.items_cache.clear()
         self.words_cache.clear()
         self.annot_cache.clear()
@@ -5629,6 +5633,8 @@ class App:
         for p in set(pages):
             for c in (self.items_cache, self.words_cache, self.annot_cache):
                 c.pop(p, None)
+            for k_ in [k_ for k_ in self._ph_lru if k_[0] == p]:
+                self._ph_lru.pop(k_, None)
             if p not in self.imgs or p not in self.slots:
                 continue
             try:
@@ -5672,6 +5678,9 @@ class App:
         want = [p for p, (x, y, w, h) in self.slots.items() if y + h >= top - pad and y <= bot + pad]
         for p in list(self.imgs):
             if p not in want:
+                self._ph_lru[(p, round(self.zoom, 4))] = self.imgs[p]
+                while len(self._ph_lru) > 6:
+                    self._ph_lru.pop(next(iter(self._ph_lru)))
                 self.cv.delete(f"img{p}")
                 self.cv.delete(f"memo{p}")
                 self.cv.delete(f"memolink{p}")
@@ -5688,7 +5697,10 @@ class App:
                                             or abs(r.height - self.sizes[p][1]) > 0.5):
                     self.sizes[p] = (r.width, r.height)   # 빠르게 잰 크기가 틀렸으면 (드문 경우) 바로잡고 다시 배치
                     self.root.after_idle(self.render)
-                img = page_photo(page, self.zoom)
+                ck = (p, round(self.zoom, 4))
+                img = self._ph_lru.pop(ck, None)           # 방금 지나친 쪽은 다시 그리지 않고 재사용 (되돌아 스크롤이 빨라짐)
+                if img is None:
+                    img = page_photo(page, self.zoom)
             except Exception:
                 continue
             self.imgs[p] = img
@@ -6561,8 +6573,12 @@ class App:
 
     # ---------- 수정 ----------
     def push_undo(self):
-        self.undo.append((self.doc.tobytes(), self.page_no))
+        data = self.doc.tobytes()
+        self.undo.append((data, self.page_no))
         del self.undo[:-UNDO_MAX]
+        total = sum(len(d) for d, _ in self.undo)          # 큰 파일은 되돌리기 기록이 메모리를 너무 먹지 않게 (최대 약 400MB, 최소 3개)
+        while len(self.undo) > 3 and total > 400 * 1024 * 1024:
+            total -= len(self.undo.pop(0)[0])
 
     def do_undo(self):
         if not self.undo:
