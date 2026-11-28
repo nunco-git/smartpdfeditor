@@ -610,6 +610,66 @@ def _clean(s):
     return re.sub(r"[ \t ]+", " ", (s or "").replace("\r", "")).strip()
 
 
+def _cell_words_text(page, rect):
+    """칸 안의 글자를 낱말 단위로 읽어 줄별로 이어붙임 (쉼표·마침표가 따로 떨어져 나오지 않게)"""
+    r = fitz.Rect(rect)
+    r = fitz.Rect(r.x0 + 0.6, r.y0 + 0.6, r.x1 - 0.6, r.y1 - 0.6)
+    ws = page.get_text("words", clip=r)
+    lines = {}
+    for w in ws:
+        lines.setdefault((w[5], w[6]), []).append(w)
+    out = []
+    for k in sorted(lines, key=lambda k: (min(w[1] for w in lines[k]), k)):
+        ln = sorted(lines[k], key=lambda w: w[0])
+        out.append(" ".join(w[4] for w in ln))
+    # 비슷한 높이인데 다른 줄로 갈라진 조각(떨어진 부호 등)은 앞줄에 합침
+    return _clean("\n".join(out).replace(" \n", "\n")).replace("\n ", "\n")
+
+
+def _table_cells(page, t):
+    """표 → (글자 행렬, 병합 목록[(r0,c0,r1,c1)]). 병합된 칸은 왼쪽 위 칸에만 글자를 넣음"""
+    nr, nc = t.row_count, t.col_count
+    rws = t.rows
+    xs0, xs1 = {}, {}
+    for r in range(len(rws)):
+        cs = rws[r].cells
+        for c in range(min(nc, len(cs))):
+            if cs[c] is not None:
+                xs0.setdefault(c, cs[c][0])
+                xs1.setdefault(c, cs[c][2])
+    rows = [["" for _ in range(nc)] for _ in range(len(rws))]
+    merges = []
+    for r in range(len(rws)):
+        cs = rws[r].cells
+        for c in range(min(nc, len(cs))):
+            bb = cs[c]
+            if bb is None:
+                continue
+            txt = _cell_words_text(page, bb)
+            if not txt:
+                try:
+                    txt = _clean(t.extract()[r][c])
+                except Exception:
+                    txt = ""
+            rows[r][c] = txt
+            c1 = c
+            for k in range(c + 1, nc):
+                if k in xs0 and xs0[k] >= bb[0] - 1 and xs1.get(k, 0) <= bb[2] + 1 and (xs0[k] + xs1[k]) / 2 < bb[2]:
+                    c1 = k
+                else:
+                    break
+            r1 = r
+            for k in range(r + 1, len(rws)):
+                rb = rws[k].bbox
+                if (rb[1] + rb[3]) / 2 < bb[3] - 1:
+                    r1 = k
+                else:
+                    break
+            if r1 > r or c1 > c:
+                merges.append((r, c, r1, c1))
+    return rows, merges
+
+
 def _image_bytes(doc, xref):
     try:
         info = doc.extract_image(xref)
@@ -689,11 +749,11 @@ def extract_pages(src_bytes, pages=None, use_ocr=True, want_images=True, progres
             items = []                                   # (y0, x0, block)
             for t in tables:
                 try:
-                    rows = [[_clean(c) for c in row] for row in t.extract()]
+                    rows, merges = _table_cells(page, t)
                 except Exception:
                     continue
                 if rows and any(any(c for c in r) for r in rows):
-                    items.append((t.bbox[1], t.bbox[0], {"t": "tbl", "rows": rows}))
+                    items.append((t.bbox[1], t.bbox[0], {"t": "tbl", "rows": rows, "merges": merges}))
             d = page.get_text("dict", flags=fitz.TEXT_PRESERVE_IMAGES | fitz.TEXT_PRESERVE_WHITESPACE
                               if want_images else fitz.TEXT_PRESERVE_WHITESPACE)
             has_text = False
@@ -907,7 +967,7 @@ def save_xlsx(pages, dst, split=False, gap=True):
     sheets = []
     groups = [[pg] for pg in pages] if split else [pages]
     for grp in groups:
-        rows_xml, r, widths = [], 1, {}
+        rows_xml, r, widths, mrg = [], 1, {}, []
         for pg in grp:
           if rows_xml and not split and gap:
             r += 1                                     # 쪽 사이 빈 줄
@@ -917,6 +977,9 @@ def save_xlsx(pages, dst, split=False, gap=True):
                   rows_xml.append(f'<row r="{r}">{_cell("A%d" % r, bk["text"], st)}</row>')
                   r += 1
               elif bk["t"] == "tbl":
+                  r0 = r
+                  for (a, b, c_, d_) in bk.get("merges", []):
+                      mrg.append(f"{_col_letter(b)}{r0 + a}:{_col_letter(d_)}{r0 + c_}")
                   for row in bk["rows"]:
                       cells = []
                       for c, t in enumerate(row):
@@ -931,7 +994,9 @@ def save_xlsx(pages, dst, split=False, gap=True):
         sheets.append(('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
                        + (f"<cols>{cols}</cols>" if cols else "") +
-                       f'<sheetData>{"".join(rows_xml)}</sheetData></worksheet>', f'{grp[0]["no"]}쪽' if split else "변환결과"))
+                       f'<sheetData>{"".join(rows_xml)}</sheetData>'
+                       + (f'<mergeCells count="{len(mrg)}">' + "".join(f'<mergeCell ref="{m}"/>' for m in mrg) + '</mergeCells>' if mrg else "")
+                       + '</worksheet>', f'{grp[0]["no"]}쪽' if split else "변환결과"))
     wb = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
           'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>']
     wr = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">']
