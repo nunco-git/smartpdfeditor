@@ -251,7 +251,7 @@ def stats_call(url, method, body):
                 json.dumps(body).encode("utf-8"), limit=4096, timeout=8)
 AD_CACHE = os.path.join(CONF_DIR, "ad_cache")            # 인터넷이 안 될 때 마지막 광고 사용
 AD_REFRESH_MS = 3 * 60 * 60 * 1000                       # 3시간마다 새로 확인
-APP_VER = "1.0.44"
+APP_VER = "1.0.45"
 
 # 스마트공 로고 (PNG, base64 내장)
 LOGO_PNG = (
@@ -6270,7 +6270,10 @@ class App:
         if mode == "edit":
             it = self.hit_pt(p, pt)
             if it:
-                self.edit_dialog(it, p)
+                if getattr(e, "state", 0) & 0x1:          # Shift+클릭 = 문단 전체 창
+                    self.edit_dialog(it, p)
+                else:
+                    self.inline_edit(it, p)
         elif mode in ("mark", "hide"):
             it = self.hit_pt(p, pt)
             if it:
@@ -7013,6 +7016,58 @@ class App:
             return res, i
         res, _ = build(0, 1)
         return res
+
+    def inline_edit(self, it, p):
+        """팝업 없이 화면의 그 자리에서 바로 고침 (엔터=적용, Esc=취소, 다른 곳 클릭=적용)"""
+        old = getattr(self, "_inl", None)
+        if old:
+            old["commit"]()
+        x0, y0, x1, y1 = self.page_to_canvas_rect(p, it["rect"])
+        px = max(8, int(round(it["size"] * self.zoom)))
+        fam = "맑은 고딕"
+        ent = tk.Entry(self.cv, font=(fam, -px, "bold" if it["bold"] else "normal"), relief="solid", bd=1,
+                       bg="#fffde7", fg="#000000", highlightthickness=1, highlightbackground="#2b6cb0",
+                       insertbackground="#000")
+        ent.insert(0, it["text"])
+        wpx = max(60, int(x1 - x0) + px * 3)
+        win = self.cv.create_window(x0 - 2, y0 - 2, window=ent, anchor="nw", width=wpx, height=int(y1 - y0) + 6)
+        st = {"done": False}
+
+        def close():
+            st["done"] = True
+            self._inl = None
+            try:
+                self.cv.delete(win)
+                ent.destroy()
+            except tk.TclError:
+                pass
+
+        def commit(_=None):
+            if st["done"]:
+                return
+            new = ent.get()
+            close()
+            if new == it["text"]:
+                return
+            try:
+                self.push_undo()
+                self.apply_edits(self.doc[p], [(it["rect"], it["origin"], it["size"], it["color"], it["bold"],
+                                                new, it.get("font"), True)])
+                self.dirty = True
+                self.refresh_pages([p])
+                self.status.set("수정했습니다. (Ctrl+Z 되돌리기, Ctrl+S 저장 · Shift+클릭 = 문단 전체 수정)")
+            except Exception as ex:
+                messagebox.showerror(APP, f"수정 실패:\n{ex}")
+
+        st["commit"] = commit
+        self._inl = st
+        ent.bind("<Return>", commit)
+        ent.bind("<KP_Enter>", commit)
+        ent.bind("<Escape>", lambda _e: close())
+        ent.bind("<FocusOut>", lambda _e: self.root.after(80, commit))
+        ent.focus_set()
+        ent.select_range(0, "end")
+        ent.icursor("end")
 
     def edit_dialog(self, it, p=None):
         """글자 수정: 누른 글자가 든 문단 전체(여러 줄)를 한 창에 열어서 고침. 줄 수가 같으면 줄마다 제자리에,
