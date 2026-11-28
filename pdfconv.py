@@ -839,6 +839,18 @@ _W_NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
          'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"')
 
 
+def _merge_map(bk):
+    """병합 정보 → ({(r,c): (행수, 열수)} 왼쪽위 칸, {(r,c)} 가려지는 칸)"""
+    head, hidden = {}, set()
+    for (r0, c0, r1, c1) in bk.get("merges", []):
+        head[(r0, c0)] = (r1 - r0 + 1, c1 - c0 + 1)
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                if (r, c) != (r0, c0):
+                    hidden.add((r, c))
+    return head, hidden
+
+
 def _col_weights(rows):
     n = max(len(r) for r in rows)
     ws = []
@@ -872,13 +884,32 @@ def save_docx(pages, dst):
                 x.append('</w:tblBorders><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>')
                 x += [f'<w:gridCol w:w="{g}"/>' for g in grid]
                 x.append('</w:tblGrid>')
-                for r in rows:
+                head, hidden = _merge_map(bk)
+                for ri, r in enumerate(rows):
                     x.append('<w:tr>')
-                    for c in range(len(ws)):
+                    c = 0
+                    while c < len(ws):
                         t = r[c] if c < len(r) else ""
-                        x.append(f'<w:tc><w:tcPr><w:tcW w:w="{grid[c]}" w:type="dxa"/></w:tcPr><w:p><w:r><w:rPr>'
+                        rs, cs = head.get((ri, c), (1, 1))
+                        prop = f'<w:tcW w:w="{sum(grid[c:c + cs])}" w:type="dxa"/>'
+                        if cs > 1:
+                            prop += f'<w:gridSpan w:val="{cs}"/>'
+                        if rs > 1:
+                            prop += '<w:vMerge w:val="restart"/>'
+                        elif (ri, c) in hidden and any(m[1] == c and m[0] < ri <= m[2] for m in bk.get("merges", [])):
+                            prop += '<w:vMerge/>'
+                            t = ""
+                            cs = next((m[3] - m[1] + 1 for m in bk["merges"] if m[1] == c and m[0] < ri <= m[2]), 1)
+                            if cs > 1:
+                                prop = prop.replace("<w:vMerge/>", f'<w:gridSpan w:val="{cs}"/><w:vMerge/>')
+                                prop = prop.replace(f'w:w="{grid[c]}"', f'w:w="{sum(grid[c:c + cs])}"')
+                        elif (ri, c) in hidden:
+                            c += 1
+                            continue
+                        x.append(f'<w:tc><w:tcPr>{prop}</w:tcPr><w:p><w:r><w:rPr>'
                                  f'<w:rFonts w:eastAsia="맑은 고딕"/><w:sz w:val="18"/></w:rPr>'
                                  f'<w:t xml:space="preserve">{_x(t)}</w:t></w:r></w:p></w:tc>')
+                        c += cs
                     x.append('</w:tr>')
                 x.append('</w:tbl><w:p/>')
                 body.append("".join(x))
@@ -1195,17 +1226,21 @@ def save_hwpx(pages, dst, title=""):
                      'horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
                      '<hp:outMargin left="0" right="0" top="0" bottom="283"/><hp:inMargin left="141" right="141" top="141" bottom="141"/>']
                 small = cp(9, False)
+                head, hidden = _merge_map(bk)
                 for ri, r in enumerate(rows):
                     x.append("<hp:tr>")
                     for c in range(len(ws)):
+                        if (ri, c) in hidden:
+                            continue
+                        rs, cs = head.get((ri, c), (1, 1))
                         t = r[c] if c < len(r) else ""
                         run = f'<hp:run charPrIDRef="{small}"><hp:t>{_x(t)}</hp:t></hp:run>' if t else f'<hp:run charPrIDRef="{small}"/>'
                         x.append('<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="2">'
                                  '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" '
                                  'linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
                                  f'<hp:p id="2147483648" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">{run}</hp:p></hp:subList>'
-                                 f'<hp:cellAddr colAddr="{c}" rowAddr="{ri}"/><hp:cellSpan colSpan="1" rowSpan="1"/>'
-                                 f'<hp:cellSz width="{grid[c]}" height="{rh}"/><hp:cellMargin left="141" right="141" top="141" bottom="141"/></hp:tc>')
+                                 f'<hp:cellAddr colAddr="{c}" rowAddr="{ri}"/><hp:cellSpan colSpan="{cs}" rowSpan="{rs}"/>'
+                                 f'<hp:cellSz width="{sum(grid[c:c + cs])}" height="{rh * rs}"/><hp:cellMargin left="141" right="141" top="141" bottom="141"/></hp:tc>')
                     x.append("</hp:tr>")
                 x.append("</hp:tbl></hp:run>")
                 para("".join(x), pb and not wrote)
